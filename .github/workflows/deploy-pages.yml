@@ -1,3 +1,4 @@
+## Deploys the learning project site to GitHub Pages
 name: Deploy to GitHub Pages
 
 on:
