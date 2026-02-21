@@ -1,0 +1,15 @@
+{
+  "name": "webmcp-learning-project",
+  "version": "1.0.0",
+  "description": "A hands-on learning project for understanding WebMCP (Web Model Context Protocol)",
+  "private": true,
+  "scripts": {
+    "dev:basic": "npx serve examples/01-basic-tool",
+    "dev:counter": "npx serve examples/02-counter-state",
+    "dev:todo": "npx serve examples/03-todo-app",
+    "dev:forms": "npx serve examples/04-declarative-forms",
+    "dev:react": "cd examples/05-react-integration && npm run dev"
+  },
+  "keywords": ["webmcp", "model-context-protocol", "ai-agents", "browser-api"],
+  "license": "MIT"
+}

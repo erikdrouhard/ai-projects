@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Example 1: Basic Tool Registration</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; background: #0f172a; color: #e2e8f0; }
+    h1 { color: #38bdf8; margin-bottom: 0.5rem; }
+    .subtitle { color: #94a3b8; margin-bottom: 2rem; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #334155; }
+    .card h2 { color: #7dd3fc; margin-bottom: 1rem; font-size: 1.1rem; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+    .status.supported { background: #065f46; color: #6ee7b7; }
+    .status.unsupported { background: #7f1d1d; color: #fca5a5; }
+    pre { background: #0f172a; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.9rem; line-height: 1.6; }
+    code { color: #a5f3fc; }
+    .comment { color: #64748b; }
+    .keyword { color: #c084fc; }
+    .string { color: #86efac; }
+    .function { color: #fbbf24; }
+    .log-area { background: #0f172a; padding: 1rem; border-radius: 8px; min-height: 100px; font-family: monospace; font-size: 0.85rem; }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+    .log-entry .time { color: #64748b; }
+    .log-entry .msg { color: #e2e8f0; }
+    #greeting-output { font-size: 1.2rem; color: #34d399; padding: 1rem; text-align: center; min-height: 3rem; }
+    .concept { background: #1e1b4b; border: 1px solid #3730a3; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .concept h3 { color: #a78bfa; margin-bottom: 0.5rem; font-size: 0.95rem; }
+    .concept p { color: #c4b5fd; font-size: 0.9rem; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>Example 1: Basic Tool Registration</h1>
+  <p class="subtitle">Learn how to register your first WebMCP tool using navigator.modelContext</p>
+
+  <div class="card">
+    <h2>WebMCP Support Check</h2>
+    <p>Status: <span id="support-status" class="status">Checking...</span></p>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: What is a WebMCP Tool?</h3>
+    <p>
+      A WebMCP tool is a JavaScript function that you register with the browser via
+      <code>navigator.modelContext.registerTool()</code>. Each tool has a <strong>name</strong>,
+      a human-readable <strong>description</strong>, an <strong>inputSchema</strong> (JSON Schema)
+      defining its parameters, and an <strong>execute</strong> function that runs when called.
+      AI agents can discover and invoke these tools instead of scraping your page.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Registered Tools</h2>
+    <div id="tools-list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Greeting Output</h2>
+    <div id="greeting-output">Waiting for a greeting...</div>
+  </div>
+
+  <div class="card">
+    <h2>Tool Call Log</h2>
+    <div id="log-area" class="log-area">
+      <div class="log-entry"><span class="time">[startup]</span> <span class="msg">Initializing WebMCP tools...</span></div>
+    </div>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: Feature Detection</h3>
+    <p>
+      Always check for WebMCP support before registering tools:
+      <code>if ('modelContext' in navigator) { ... }</code>.
+      WebMCP is currently available in Chrome 146+ behind a flag
+      (<code>chrome://flags → WebMCP</code>). This project uses a polyfill
+      so examples work in any browser.
+    </p>
+  </div>
+
+  <!-- Polyfill for browsers without native WebMCP support -->
+  <script src="../shared/webmcp-polyfill.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

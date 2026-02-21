@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Example 3: Todo App with WebMCP</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; background: #0f172a; color: #e2e8f0; }
+    h1 { color: #38bdf8; margin-bottom: 0.5rem; }
+    .subtitle { color: #94a3b8; margin-bottom: 2rem; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #334155; }
+    .card h2 { color: #7dd3fc; margin-bottom: 1rem; font-size: 1.1rem; }
+    .add-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .add-form input { flex: 1; padding: 0.75rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; font-size: 1rem; }
+    .add-form select { padding: 0.75rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; font-size: 0.9rem; }
+    .add-form button { padding: 0.75rem 1.5rem; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .todo-list { list-style: none; }
+    .todo-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; background: #0f172a; }
+    .todo-item.completed .todo-text { text-decoration: line-through; color: #64748b; }
+    .todo-checkbox { width: 20px; height: 20px; cursor: pointer; accent-color: #22c55e; }
+    .todo-text { flex: 1; }
+    .todo-priority { font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+    .priority-high { background: #7f1d1d; color: #fca5a5; }
+    .priority-medium { background: #713f12; color: #fde68a; }
+    .priority-low { background: #14532d; color: #86efac; }
+    .todo-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 1.2rem; padding: 0 0.5rem; }
+    .stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .stat { background: #0f172a; padding: 1rem; border-radius: 8px; flex: 1; min-width: 100px; text-align: center; }
+    .stat-value { font-size: 2rem; font-weight: bold; color: #38bdf8; }
+    .stat-label { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
+    .concept { background: #1e1b4b; border: 1px solid #3730a3; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .concept h3 { color: #a78bfa; margin-bottom: 0.5rem; font-size: 0.95rem; }
+    .concept p { color: #c4b5fd; font-size: 0.9rem; line-height: 1.6; }
+    .log-area { background: #0f172a; padding: 1rem; border-radius: 8px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+    .empty-state { text-align: center; padding: 2rem; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>Example 3: Todo App</h1>
+  <p class="subtitle">A complete CRUD application with multiple coordinated WebMCP tools</p>
+
+  <div class="card">
+    <h2>Add Todo</h2>
+    <div class="add-form">
+      <input type="text" id="todo-input" placeholder="What needs to be done?">
+      <select id="todo-priority">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+      </select>
+      <button onclick="addTodoFromUI()">Add</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Todos</h2>
+    <ul class="todo-list" id="todo-list">
+      <li class="empty-state">No todos yet. Add one above!</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Statistics</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-active">0</div>
+        <div class="stat-label">Active</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-completed">0</div>
+        <div class="stat-label">Completed</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-high">0</div>
+        <div class="stat-label">High Priority</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: Multiple Coordinated Tools</h3>
+    <p>
+      Real applications need multiple tools that work together. This example
+      registers six tools: <code>add_todo</code>, <code>list_todos</code>,
+      <code>toggle_todo</code>, <code>delete_todo</code>, <code>get_stats</code>,
+      and <code>clear_completed</code>. An AI agent can chain these tools to
+      accomplish complex tasks like "add three high-priority items and then show
+      me the stats."
+    </p>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: Rich Input Schemas</h3>
+    <p>
+      The <code>add_todo</code> tool uses an inputSchema with an enum for priority
+      levels and required fields. This schema tells AI agents exactly what
+      parameters are valid, preventing errors before they happen. JSON Schema v7
+      is used — the same format as OpenAI function calling and standard MCP servers.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Tool Activity Log</h2>
+    <div id="log-area" class="log-area"></div>
+  </div>
+
+  <script src="../shared/webmcp-polyfill.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

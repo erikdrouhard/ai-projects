@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Example 2: Counter with State</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; background: #0f172a; color: #e2e8f0; }
+    h1 { color: #38bdf8; margin-bottom: 0.5rem; }
+    .subtitle { color: #94a3b8; margin-bottom: 2rem; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #334155; }
+    .card h2 { color: #7dd3fc; margin-bottom: 1rem; font-size: 1.1rem; }
+    .counter-display { font-size: 4rem; font-weight: bold; text-align: center; color: #38bdf8; padding: 2rem; font-variant-numeric: tabular-nums; }
+    .controls { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    button { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: transform 0.1s; }
+    button:active { transform: scale(0.95); }
+    .btn-dec { background: #ef4444; color: white; }
+    .btn-inc { background: #22c55e; color: white; }
+    .btn-reset { background: #64748b; color: white; }
+    .btn-set { background: #8b5cf6; color: white; }
+    .set-input { background: #0f172a; border: 1px solid #475569; color: #e2e8f0; padding: 0.75rem; border-radius: 8px; font-size: 1rem; width: 100px; text-align: center; }
+    .log-area { background: #0f172a; padding: 1rem; border-radius: 8px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+    .log-entry .time { color: #64748b; }
+    .log-entry .agent { color: #c084fc; }
+    .log-entry .user { color: #38bdf8; }
+    .concept { background: #1e1b4b; border: 1px solid #3730a3; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .concept h3 { color: #a78bfa; margin-bottom: 0.5rem; font-size: 0.95rem; }
+    .concept p { color: #c4b5fd; font-size: 0.9rem; line-height: 1.6; }
+    .tools-table { width: 100%; border-collapse: collapse; }
+    .tools-table th, .tools-table td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #334155; }
+    .tools-table th { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; }
+    .tools-table td { font-size: 0.9rem; }
+    .tool-name { color: #fbbf24; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h1>Example 2: Counter with State</h1>
+  <p class="subtitle">Tools that read and modify shared application state</p>
+
+  <div class="card">
+    <h2>Counter</h2>
+    <div class="counter-display" id="counter-display">0</div>
+    <div class="controls">
+      <button class="btn-dec" onclick="decrement()">- 1</button>
+      <button class="btn-reset" onclick="resetCounter()">Reset</button>
+      <button class="btn-inc" onclick="increment()">+ 1</button>
+      <input type="number" class="set-input" id="set-value" placeholder="42">
+      <button class="btn-set" onclick="setFromInput()">Set</button>
+    </div>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: Shared State Between UI and Tools</h3>
+    <p>
+      WebMCP tools operate on the same application state as the user interface.
+      When an AI agent calls <code>set_counter</code>, the UI updates immediately.
+      When a user clicks a button, the tool's <code>get_counter</code> reflects the new value.
+      This shared context is one of WebMCP's core strengths — agents and users
+      collaborate within the same page.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Registered WebMCP Tools</h2>
+    <table class="tools-table">
+      <thead>
+        <tr><th>Tool</th><th>Description</th><th>Parameters</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="tool-name">get_counter</td>
+          <td>Returns the current counter value</td>
+          <td>None</td>
+        </tr>
+        <tr>
+          <td class="tool-name">set_counter</td>
+          <td>Sets the counter to a specific value</td>
+          <td><code>value</code> (number)</td>
+        </tr>
+        <tr>
+          <td class="tool-name">increment_counter</td>
+          <td>Increases the counter by a given amount</td>
+          <td><code>amount</code> (number, default: 1)</td>
+        </tr>
+        <tr>
+          <td class="tool-name">decrement_counter</td>
+          <td>Decreases the counter by a given amount</td>
+          <td><code>amount</code> (number, default: 1)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Activity Log</h2>
+    <div id="log-area" class="log-area"></div>
+  </div>
+
+  <div class="concept">
+    <h3>Key Concept: Tool Annotations</h3>
+    <p>
+      Tools can include annotations like <code>readOnlyHint: true</code> to signal
+      they don't modify state, or <code>idempotentHint: true</code> to indicate
+      they can be safely retried. These hints help agents make smarter decisions
+      about which tools to call and when.
+    </p>
+  </div>
+
+  <script src="../shared/webmcp-polyfill.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
