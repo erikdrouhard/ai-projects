@@ -1,0 +1,44 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [claude/webmcp-learning-project-ZK8gD]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the React example
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build React example
+        working-directory: examples/05-react-integration
+        run: |
+          npm install
+          npx vite build
+          # Replace the source files with built output for static serving
+          # Keep package.json so the directory isn't empty
+          cp -r dist/* .
+          rm -rf node_modules src dist
+
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

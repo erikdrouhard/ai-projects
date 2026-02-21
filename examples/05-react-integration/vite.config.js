@@ -3,4 +3,5 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  base: '/ai-projects/examples/05-react-integration/',
 });
