@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/webmcp-learning-project-ZK8gD]
+    branches: [claude/webmcp-learning-project-ZK8gD, main]
 
 permissions:
   contents: read
@@ -29,16 +29,26 @@ jobs:
       - name: Build React example
         working-directory: examples/05-react-integration
         run: |
-          npm install
+          npm ci
           npx vite build
-          # Replace the source files with built output for static serving
-          # Keep package.json so the directory isn't empty
-          cp -r dist/* .
-          rm -rf node_modules src dist
+
+      # Assemble a clean deploy directory
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r examples _site/examples
+          # Replace React source with built output
+          rm -rf _site/examples/05-react-integration/src \
+                 _site/examples/05-react-integration/node_modules \
+                 _site/examples/05-react-integration/package.json \
+                 _site/examples/05-react-integration/package-lock.json \
+                 _site/examples/05-react-integration/vite.config.js
+          cp -r examples/05-react-integration/dist/* _site/examples/05-react-integration/
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
