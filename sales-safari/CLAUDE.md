@@ -10,6 +10,10 @@ sales-safari/
   AGENTS.md
 ```
 
+## Key References
+
+- **`SSAFARI.md`** — Source of truth for what Sales Safari is and how to do it. Refer to this file for the methodology, process steps, what to look for, and how findings are used.
+
 ## Rules
 
 - All project files stay inside this `sales-safari/` folder.
