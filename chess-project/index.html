@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Chess Pieces</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #sidebar {
+      width: 240px;
+      background: #16213e;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #0f3460;
+    }
+
+    #sidebar h1 {
+      font-size: 20px;
+      margin-bottom: 8px;
+      color: #e94560;
+      letter-spacing: 1px;
+    }
+
+    #sidebar p {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 20px;
+    }
+
+    .piece-btn {
+      background: #0f3460;
+      border: 2px solid transparent;
+      color: #e0e0e0;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      text-align: left;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .piece-btn:hover {
+      background: #1a3a6e;
+    }
+
+    .piece-btn.active {
+      border-color: #e94560;
+      background: #1a3a6e;
+    }
+
+    .piece-btn .icon {
+      font-size: 22px;
+    }
+
+    #viewer {
+      flex: 1;
+      position: relative;
+    }
+
+    #piece-name {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 28px;
+      font-weight: 700;
+      color: #e94560;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>Chess Pieces</h1>
+    <p>Click a piece to view in 3D</p>
+    <button class="piece-btn active" data-piece="king"><span class="icon">&#9812;</span> King</button>
+    <button class="piece-btn" data-piece="queen"><span class="icon">&#9813;</span> Queen</button>
+    <button class="piece-btn" data-piece="rook"><span class="icon">&#9814;</span> Rook</button>
+    <button class="piece-btn" data-piece="bishop"><span class="icon">&#9815;</span> Bishop</button>
+    <button class="piece-btn" data-piece="knight"><span class="icon">&#9816;</span> Knight</button>
+    <button class="piece-btn" data-piece="pawn"><span class="icon">&#9817;</span> Pawn</button>
+  </div>
+  <div id="viewer">
+    <div id="piece-name">King</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
