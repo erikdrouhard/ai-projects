@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1 — Build the White Cross</title>
+  <style>
+    :root {
+      --text: #111;
+      --muted: #555;
+      --accent: #2563eb;
+      --ok: #15803d;
+      --bad: #b91c1c;
+      --bg: #faf9f7;
+      --card: #fff;
+      --border: #e5e2dc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Palatino Linotype", Palatino, Georgia, serif;
+      line-height: 1.6;
+      color: var(--text);
+      background: var(--bg);
+      max-width: 44rem;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+    h1 { font-weight: 400; font-size: 2.1rem; letter-spacing: -0.02em; margin: 0 0 0.2rem; }
+    .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+    h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin: 2.25rem 0 0.75rem;
+    }
+    .win {
+      background: linear-gradient(135deg, #eff6ff, #f0fdf4);
+      border: 1px solid #bfdbfe;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+      border-radius: 2px;
+    }
+    .win strong { color: var(--accent); }
+    ol.steps { padding-left: 1.25rem; }
+    ol.steps li { margin: 0.65rem 0; }
+    .fix {
+      background: var(--card);
+      border-left: 3px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+    .quiz {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 1.25rem;
+      margin: 1.5rem 0;
+    }
+    .quiz h3 { margin: 0 0 1rem; font-size: 1rem; }
+    .quiz label {
+      display: block;
+      padding: 0.55rem 0.75rem;
+      margin: 0.35rem 0;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      border-radius: 2px;
+      transition: background 0.15s;
+    }
+    .quiz label:hover { background: #f8f7f4; }
+    .quiz input { margin-right: 0.5rem; }
+    button {
+      font-family: inherit;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1.1rem;
+      cursor: pointer;
+      margin-top: 0.75rem;
+      border-radius: 2px;
+      font-size: 0.95rem;
+    }
+    button:hover { background: #1d4ed8; }
+    #feedback { margin-top: 0.75rem; font-weight: 600; min-height: 1.4em; }
+    .practice {
+      border: 2px dashed var(--border);
+      padding: 1.25rem;
+      margin: 1.5rem 0;
+      text-align: center;
+    }
+    .practice p { margin: 0.5rem 0; }
+    cite { display: block; margin-top: 2rem; font-size: 0.88rem; color: var(--muted); font-style: normal; }
+    cite a { color: var(--accent); }
+    .ask {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      padding: 1rem 1.25rem;
+      margin-top: 2rem;
+      font-size: 0.95rem;
+    }
+    footer { margin-top: 2rem; font-size: 0.85rem; color: var(--muted); }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>Lesson 1: Build the White Cross</h1>
+  <p class="meta">Rubik's Cube · Beginner Method · ~10 min with a cube in hand</p>
+
+  <div class="win">
+    <strong>Your win today:</strong> Place all four white edge pieces around the white center so you have a white cross on top — and each edge's second color matches the center on that side.
+  </div>
+
+  <p>This lesson is step 1 of the <a href="https://jperm.net/3x3">J Perm beginner method</a>. Every full solve starts here. Read <a href="../reference/cube-anatomy.html">Cube Anatomy</a> first if piece names are unfamiliar.</p>
+
+  <h2>Before you start</h2>
+  <ul>
+    <li>Hold the cube with the <strong>white center on top</strong>.</li>
+    <li>You're looking for <strong>edge pieces</strong> — they have exactly two colors, one of which is white.</li>
+    <li>Ignore corners for now. Corners come in Lesson 2.</li>
+  </ul>
+
+  <h2>The algorithm (in plain English)</h2>
+  <p>For each white edge stuck in the bottom layer:</p>
+  <ol class="steps">
+    <li>Find a white edge in the bottom layer.</li>
+    <li>Look at its <em>other</em> color (e.g. red). Turn the bottom layer until that edge sits directly under the center of the same color.</li>
+    <li>Turn that side face once to lift the edge to the top.</li>
+    <li>Check: white sticker on top, side color matches the side center.</li>
+  </ol>
+
+  <div class="fix">
+    <strong>Edge flipped wrong?</strong> If white faces the side instead of up, do: bottom turn to align → lift → bottom turn back → lift again. <a href="https://jperm.net/3x3">See J Perm's flipped-edge photos</a>.
+  </div>
+
+  <div class="fix">
+    <strong>Edge stuck in the middle?</strong> Move it down to the bottom first with: turn the side it's on once, turn bottom once, turn that side back. Then solve it normally.
+  </div>
+
+  <h2>Check your understanding</h2>
+  <div class="quiz">
+    <h3>Which piece type has exactly two colors?</h3>
+    <label><input type="radio" name="q1" value="a"> Center piece</label>
+    <label><input type="radio" name="q1" value="b"> Edge piece</label>
+    <label><input type="radio" name="q1" value="c"> Corner piece</label>
+    <button type="button" onclick="checkQuiz()">Check answer</button>
+    <div id="feedback"></div>
+  </div>
+
+  <h2>Hands-on practice</h2>
+  <div class="practice">
+    <p><strong>Scramble your cube</strong> (or use a <a href="https://cubeast.com/" target="_blank" rel="noopener">simulator</a>).</p>
+    <p>Build the white cross. Time yourself — aim for under 3 minutes by your third attempt.</p>
+    <p>When done, all four side colors on the cross edges must match their center stickers.</p>
+  </div>
+
+  <h2>Done? What's next</h2>
+  <p>Lesson 2 will use the "4-move sequence" to snap white corners into place and complete the entire first layer. Don't rush — a clean cross makes everything after it easier.</p>
+
+  <cite>
+    Primary source: <a href="https://www.youtube.com/watch?v=7Ron6MN45LY">J Perm — Learn How to Solve a Rubik's Cube in 10 Minutes</a> (Step 1 section, 0:00–2:30 approx.)
+  </cite>
+
+  <div class="ask">
+    <strong>Stuck?</strong> Ask your teacher (the agent) anything — describe where your edge is and what colors you see. That's what the /teach skill is for.
+  </div>
+
+  <footer>
+    Reference: <a href="../reference/cube-anatomy.html">Cube Anatomy</a> ·
+    <a href="../reference/notation.html">Notation</a> ·
+    <a href="../MISSION.md">Mission</a>
+  </footer>
+
+  <script>
+    function checkQuiz() {
+      const picked = document.querySelector('input[name="q1"]:checked');
+      const fb = document.getElementById('feedback');
+      if (!picked) {
+        fb.style.color = 'var(--muted)';
+        fb.textContent = 'Pick an answer first.';
+        return;
+      }
+      if (picked.value === 'b') {
+        fb.style.color = 'var(--ok)';
+        fb.textContent = 'Correct — edges have two colors. Centers have one, corners have three.';
+      } else {
+        fb.style.color = 'var(--bad)';
+        fb.textContent = 'Not quite. Re-read the anatomy section: edges sit between two centers.';
+      }
+    }
+  </script>
+</body>
+</html>
