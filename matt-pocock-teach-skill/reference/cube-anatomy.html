@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cube Anatomy — Reference</title>
+  <style>
+    :root {
+      --text: #111;
+      --muted: #555;
+      --accent: #2563eb;
+      --bg: #faf9f7;
+      --card: #fff;
+      --border: #e5e2dc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Palatino Linotype", Palatino, Georgia, serif;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+    h1 {
+      font-weight: 400;
+      font-size: 2rem;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.25rem;
+    }
+    .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+    h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 2rem 0 0.75rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.35rem;
+    }
+    .piece {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 1rem 1.25rem;
+      margin: 0.75rem 0;
+      border-radius: 2px;
+    }
+    .piece strong { color: var(--accent); }
+    .diagram {
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.85rem;
+      background: #f3f1ec;
+      padding: 1rem;
+      margin: 1rem 0;
+      white-space: pre;
+      line-height: 1.4;
+      border-left: 3px solid var(--accent);
+    }
+    ul { padding-left: 1.2rem; }
+    li { margin: 0.35rem 0; }
+    a { color: var(--accent); }
+    footer { margin-top: 3rem; font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>Cube Anatomy</h1>
+  <p class="subtitle">Quick reference — 3×3 Rubik's Cube piece types</p>
+
+  <p>A standard 3×3 cube has <strong>26 visible pieces</strong> (the core is hidden). Every solve method builds on knowing which piece is which.</p>
+
+  <h2>Three piece types</h2>
+
+  <div class="piece">
+    <strong>Center</strong> — 1 color, never moves relative to other centers.<br>
+    There are 6 centers (white, yellow, green, blue, red, orange). They define each face's color.
+  </div>
+
+  <div class="piece">
+    <strong>Edge</strong> — 2 colors, sits between two centers.<br>
+    There are 12 edge pieces. Example: white–red edge has white on one side and red on the other.
+  </div>
+
+  <div class="piece">
+    <strong>Corner</strong> — 3 colors, sits where three faces meet.<br>
+    There are 8 corner pieces. Example: white–red–green corner touches white, red, and green faces.
+  </div>
+
+  <h2>Key insight</h2>
+  <p>Centers never swap places — only edges and corners move. When someone says "solve the white face," they mean align edges and corners <em>around</em> the white center, not move the center itself.</p>
+
+  <div class="diagram">        [Corner]
+    [Edge] [Center] [Edge]
+        [Corner]
+
+  Top-down view of one face — center is fixed,
+  edges and corners orbit around it.</div>
+
+  <h2>Beginner method anchor</h2>
+  <ul>
+    <li><strong>Step 1:</strong> White cross — 4 white edges around white center</li>
+    <li><strong>Step 2:</strong> First layer — 4 white corners</li>
+    <li><strong>Step 3:</strong> Second layer — 4 middle edges</li>
+    <li><strong>Steps 4–7:</strong> Last layer (cross, align, corners, finish)</li>
+  </ul>
+
+  <footer>
+    Source: <a href="https://jperm.net/3x3">J Perm 3×3 Tutorial</a> ·
+    <a href="../lessons/0001-white-cross.html">Lesson 1: White Cross</a>
+  </footer>
+</body>
+</html>

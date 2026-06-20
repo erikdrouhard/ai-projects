@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Move Notation — Reference</title>
+  <style>
+    :root {
+      --text: #111;
+      --muted: #555;
+      --accent: #2563eb;
+      --bg: #faf9f7;
+      --card: #fff;
+      --border: #e5e2dc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Palatino Linotype", Palatino, Georgia, serif;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+    h1 { font-weight: 400; font-size: 2rem; margin: 0 0 0.25rem; }
+    .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+    h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 2rem 0 0.75rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.35rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+      margin: 1rem 0;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+    code {
+      font-family: "SF Mono", Menlo, monospace;
+      background: #f3f1ec;
+      padding: 0.1rem 0.35rem;
+      font-size: 0.9em;
+    }
+    .note {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+    a { color: var(--accent); }
+    footer { margin-top: 3rem; font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>Move Notation</h1>
+  <p class="subtitle">Standard face-turn notation for 3×3 cubes</p>
+
+  <p>Each letter names a face. A plain letter turns that face <strong>clockwise</strong> as if you're looking directly at it. A prime (<code>'</code>) means counter-clockwise. A 2 means turn twice (180°).</p>
+
+  <h2>Face letters</h2>
+  <table>
+    <thead>
+      <tr><th>Letter</th><th>Face</th><th>When white is on top</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>U</code></td><td>Up (top)</td><td>White face</td></tr>
+      <tr><td><code>D</code></td><td>Down (bottom)</td><td>Yellow face</td></tr>
+      <tr><td><code>F</code></td><td>Front</td><td>Face toward you</td></tr>
+      <tr><td><code>B</code></td><td>Back</td><td>Face away from you</td></tr>
+      <tr><td><code>R</code></td><td>Right</td><td>Right side</td></tr>
+      <tr><td><code>L</code></td><td>Left</td><td>Left side</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Examples</h2>
+  <table>
+    <thead>
+      <tr><th>Notation</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>R</code></td><td>Right face clockwise</td></tr>
+      <tr><td><code>R'</code></td><td>Right face counter-clockwise</td></tr>
+      <tr><td><code>U2</code></td><td>Top face 180°</td></tr>
+      <tr><td><code>F R U R' U' F'</code></td><td>Sequence read left to right</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>Beginner tip:</strong> J Perm's first steps barely need notation — you mostly turn whole faces intuitively. Notation becomes essential from Step 3 onward. Learn it gradually as you go.
+  </div>
+
+  <footer>
+    Source: <a href="https://www.cubeskills.com/tutorials/the-beginners-method-for-solving-the-rubiks-cube">CubeSkills Beginner's Method</a> ·
+    <a href="cube-anatomy.html">Cube Anatomy</a>
+  </footer>
+</body>
+</html>
