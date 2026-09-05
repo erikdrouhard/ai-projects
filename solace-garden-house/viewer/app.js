@@ -14,62 +14,144 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.15;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xb7c4cc);
-scene.fog = new THREE.Fog(0xb7c4cc, 28, 78);
+scene.background = new THREE.Color(0x8aa4b5);
+scene.fog = new THREE.Fog(0x8aa4b5, 36, 90);
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 160);
+camera.rotation.order = "YXZ";
 const controls = new PointerLockControls(camera, document.body);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.02).texture;
+scene.environmentIntensity = 0.55;
 
-const hemi = new THREE.HemisphereLight(0xc9ddff, 0x3d2c18, 0.55);
+scene.add(new THREE.AmbientLight(0xfff3e0, 0.28));
+const hemi = new THREE.HemisphereLight(0xc5ddff, 0x4a3820, 0.7);
 scene.add(hemi);
 
-const sun = new THREE.DirectionalLight(0xfff0d4, 2.3);
+const sun = new THREE.DirectionalLight(0xffe3b0, 2.8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -30;
-sun.shadow.camera.right = 30;
-sun.shadow.camera.top = 30;
-sun.shadow.camera.bottom = -30;
+sun.shadow.camera.left = -32;
+sun.shadow.camera.right = 32;
+sun.shadow.camera.top = 32;
+sun.shadow.camera.bottom = -32;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 90;
-sun.shadow.bias = -0.0004;
+sun.shadow.bias = -0.00035;
 scene.add(sun);
 scene.add(sun.target);
 
-const fill = new THREE.DirectionalLight(0x9bb6d4, 0.35);
-fill.position.set(-12, 10, 8);
+const fill = new THREE.DirectionalLight(0x9eb6d0, 0.45);
+fill.position.set(-14, 12, 10);
 scene.add(fill);
 
-const keys = { w: false, a: false, s: false, d: false, shift: false };
+const COURTYARD = new THREE.Vector3(12.7, 1.4, -5.4);
+const keys = {
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+  shift: false,
+  q: false,
+  e: false,
+  arrowleft: false,
+  arrowright: false,
+  arrowup: false,
+  arrowdown: false,
+};
 let sceneInfo = null;
 let colliders = [];
-let velocity = new THREE.Vector3();
 const eye = 1.62;
 const radius = 0.28;
 let ready = false;
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
 
-startBtn.addEventListener("click", () => controls.lock());
+function lookToward(x, y, z) {
+  camera.lookAt(x, y, z);
+  camera.rotation.z = 0;
+}
+
+startBtn.addEventListener("click", () => {
+  blocker.classList.add("hidden");
+  controls.lock();
+});
+canvas.addEventListener("click", () => {
+  if (ready) {
+    blocker.classList.add("hidden");
+    controls.lock();
+  }
+});
 controls.addEventListener("lock", () => blocker.classList.add("hidden"));
-controls.addEventListener("unlock", () => blocker.classList.remove("hidden"));
+controls.addEventListener("unlock", () => {
+  /* keep exploring with WASD / arrows after unlock */
+});
 
 addEventListener("keydown", (e) => {
-  const k = e.key.toLowerCase();
-  if (k in keys) keys[k] = true;
-  if (e.key === "Shift") keys.shift = true;
+  const map = {
+    KeyW: "w",
+    KeyA: "a",
+    KeyS: "s",
+    KeyD: "d",
+    KeyQ: "q",
+    KeyE: "e",
+    ShiftLeft: "shift",
+    ShiftRight: "shift",
+    ArrowLeft: "arrowleft",
+    ArrowRight: "arrowright",
+    ArrowUp: "arrowup",
+    ArrowDown: "arrowdown",
+  };
+  const name = map[e.code];
+  if (name) {
+    keys[name] = true;
+    e.preventDefault();
+  }
 });
 addEventListener("keyup", (e) => {
-  const k = e.key.toLowerCase();
-  if (k in keys) keys[k] = false;
-  if (e.key === "Shift") keys.shift = false;
+  const map = {
+    KeyW: "w",
+    KeyA: "a",
+    KeyS: "s",
+    KeyD: "d",
+    KeyQ: "q",
+    KeyE: "e",
+    ShiftLeft: "shift",
+    ShiftRight: "shift",
+    ArrowLeft: "arrowleft",
+    ArrowRight: "arrowright",
+    ArrowUp: "arrowup",
+    ArrowDown: "arrowdown",
+  };
+  const name = map[e.code];
+  if (name) keys[name] = false;
 });
+
+canvas.addEventListener("mousedown", (e) => {
+  if (controls.isLocked) return;
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+addEventListener("mouseup", () => {
+  dragging = false;
+});
+addEventListener("mousemove", (e) => {
+  if (!dragging || controls.isLocked) return;
+  camera.rotation.y -= (e.clientX - lastX) * 0.005;
+  camera.rotation.x -= (e.clientY - lastY) * 0.005;
+  camera.rotation.x = Math.max(-1.2, Math.min(1.2, camera.rotation.x));
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -91,10 +173,9 @@ function circleVsAabb(x, z, min, max, r) {
 function resolve(pos) {
   for (let i = 0; i < 3; i++) {
     for (const c of colliders) {
+      if (c.max[1] < 0.35) continue;
       const hit = circleVsAabb(pos.x, pos.z, c.min, c.max, radius);
       if (!hit) continue;
-      // ignore slabs that are only floor-thin
-      if (c.max[1] < 0.35) continue;
       pos.x += hit.x;
       pos.z += hit.z;
     }
@@ -114,12 +195,12 @@ function resolve(pos) {
 function nearestRoom(pos) {
   if (!sceneInfo) return "Garden";
   let best = "Garden";
-  let bestD = 4.2;
+  let bestD = 5.0;
   for (const r of sceneInfo.rooms) {
     const dx = pos.x - r.center[0];
     const dz = pos.z - r.center[2];
     const d = Math.hypot(dx, dz);
-    const reach = 0.55 * Math.hypot(r.size[0], r.size[1]);
+    const reach = 0.62 * Math.hypot(r.size[0], r.size[1]);
     if (d < reach && d < bestD) {
       best = r.label;
       bestD = d;
@@ -131,6 +212,7 @@ function nearestRoom(pos) {
 function teleport(room) {
   camera.position.set(room.center[0], eye, room.center[2]);
   resolve(camera.position);
+  lookToward(COURTYARD.x, 1.4, COURTYARD.z);
   roomEl.textContent = room.label;
 }
 
@@ -142,25 +224,26 @@ function enhanceMaterials(root) {
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     for (const m of mats) {
       if (!m) continue;
-      const n = (m.name || obj.name || "").toLowerCase();
+      const n = `${m.name || ""} ${obj.name || ""}`.toLowerCase();
       if (n.includes("glass")) {
         m.transparent = true;
-        m.opacity = 0.22;
-        m.roughness = 0.05;
-        m.metalness = 0.05;
+        m.opacity = 0.28;
+        m.roughness = 0.04;
+        m.metalness = 0.08;
+        m.color = new THREE.Color(0xd8eef2);
         m.side = THREE.DoubleSide;
         m.depthWrite = false;
       }
       if (n.includes("water")) {
         m.transparent = true;
-        m.opacity = 0.62;
-        m.roughness = 0.08;
-        m.metalness = 0.1;
-        m.color = new THREE.Color(0x1a4a52);
+        m.opacity = 0.7;
+        m.roughness = 0.06;
+        m.metalness = 0.15;
+        m.color = new THREE.Color(0x163e46);
       }
       if (n.includes("emit") || n.includes("warm")) {
-        m.emissive = new THREE.Color(0xffdc9a);
-        m.emissiveIntensity = 1.6;
+        m.emissive = new THREE.Color(0xffd089);
+        m.emissiveIntensity = 2.2;
       }
     }
   });
@@ -174,14 +257,14 @@ async function boot() {
   const spawn = info.spawn.position;
   const look = info.spawn.lookAt;
   camera.position.set(spawn[0], spawn[1], spawn[2]);
-  camera.lookAt(look[0], look[1], look[2]);
+  lookToward(look[0], look[1], look[2]);
 
   if (info.sun) {
     const d = info.sun.direction;
-    sun.position.set(-d[0] * 40, Math.max(12, -d[1] * 40), -d[2] * 40);
+    sun.position.set(-d[0] * 42, Math.max(14, Math.abs(d[1]) * 42), -d[2] * 42);
     sun.target.position.set(12.7, 0, -6);
     sun.color.setRGB(info.sun.color[0], info.sun.color[1], info.sun.color[2]);
-    sun.intensity = info.sun.intensity ?? 2.3;
+    sun.intensity = 2.8;
   }
 
   const preferred = [
@@ -207,7 +290,9 @@ async function boot() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = r.label;
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
       teleport(r);
       for (const b of roomsEl.querySelectorAll("button")) b.classList.remove("active");
       btn.classList.add("active");
@@ -231,22 +316,29 @@ const clock = new THREE.Clock();
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(0.05, clock.getDelta());
-  if (ready && controls.isLocked) {
+  if (ready) {
+    const turn = 1.6 * dt;
+    if (keys.q || keys.arrowleft) camera.rotation.y += turn;
+    if (keys.e || keys.arrowright) camera.rotation.y -= turn;
+    if (keys.arrowup) camera.rotation.x += turn * 0.7;
+    if (keys.arrowdown) camera.rotation.x -= turn * 0.7;
+    camera.rotation.x = Math.max(-1.2, Math.min(1.2, camera.rotation.x));
+
     const speed = (keys.shift ? 5.6 : 2.8) * dt;
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
-    controls.getDirection(forward);
+    camera.getWorldDirection(forward);
     forward.y = 0;
-    forward.normalize();
-    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
-    velocity.set(0, 0, 0);
-    if (keys.w) velocity.add(forward);
-    if (keys.s) velocity.sub(forward);
-    if (keys.d) velocity.add(right);
-    if (keys.a) velocity.sub(right);
-    if (velocity.lengthSq() > 0) {
-      velocity.normalize().multiplyScalar(speed);
-      camera.position.add(velocity);
+    if (forward.lengthSq() > 0) forward.normalize();
+    right.crossVectors(forward, camera.up).normalize();
+    const move = new THREE.Vector3();
+    if (keys.w) move.add(forward);
+    if (keys.s) move.sub(forward);
+    if (keys.d) move.add(right);
+    if (keys.a) move.sub(right);
+    if (move.lengthSq() > 0) {
+      move.normalize().multiplyScalar(speed);
+      camera.position.add(move);
       resolve(camera.position);
       roomEl.textContent = nearestRoom(camera.position);
     }
