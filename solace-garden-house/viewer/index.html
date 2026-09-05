@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solace — The Garden House</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="view"></canvas>
+      <div id="hud">
+        <div class="brand">
+          <div class="title">Solace</div>
+          <div class="sub">The Garden House · Concept 01</div>
+        </div>
+        <div id="room">Arrival</div>
+        <div id="hint">WASD walk · arrows or Q/E turn · click+drag look · Shift run</div>
+      </div>
+      <aside id="panel">
+        <h2>Rooms</h2>
+        <ul id="rooms"></ul>
+        <p class="note">Click a room to move there. Glass sliders open onto the courtyard and south gardens.</p>
+      </aside>
+      <div id="blocker">
+        <div class="card">
+          <p class="kicker">Walkthrough</p>
+          <h1>Solace — The Garden House</h1>
+          <p>
+            A single-level 3-bed + office courtyard house, built from the Concept 01
+            plan in headless Blender and exported for first-person exploration.
+          </p>
+          <button id="start" type="button">Enter the house</button>
+          <p class="keys">WASD · arrows / Q E turn · click to look · Shift</p>
+        </div>
+      </div>
+    </div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
