@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Wizard</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0a1a; }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<script>
+(() => {
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Palette. Every pixel on screen is an index into this table.
+// ---------------------------------------------------------------------------
+const PAL = [
+  '#0b0a1a', // 0  sky darkest
+  '#141432', // 1  sky dark / hills
+  '#1e1e4a', // 2  sky mid
+  '#2c2a63', // 3  sky horizon
+  '#43407f', // 4  dim star
+  '#f4f1de', // 5  moon / star bright
+  '#c9c3a6', // 6  moon shade
+  '#8a86a8', // 7  stone light
+  '#55527a', // 8  stone mid
+  '#34314f', // 9  stone dark
+  '#1a1526', // 10 outline
+  '#6e1f3a', // 11 robe dark
+  '#b0364c', // 12 robe mid
+  '#e8b83a', // 13 gold light
+  '#a8741f', // 14 gold dark
+  '#f2c29b', // 15 skin
+  '#c98a6b', // 16 skin shade
+  '#e6e6ef', // 17 beard
+  '#a9a8c4', // 18 beard shade
+  '#7a4a2a', // 19 wood
+  '#4a2a18', // 20 wood dark
+  '#ffffff', // 21 magic white
+  '#7ff6ff', // 22 magic cyan
+  '#3fa9ff', // 23 magic blue
+  '#b45cff', // 24 magic violet
+  '#3a1f7a', // 25 magic dark
+];
+
+const SKY0 = 0, SKY1 = 1, SKY2 = 2, SKY3 = 3, STAR_DIM = 4, MOON = 5, MOON_SH = 6;
+const STONE_L = 7, STONE_M = 8, STONE_D = 9, OUTLINE = 10;
+const ROBE_D = 11, ROBE_M = 12, GOLD_L = 13, GOLD_D = 14, SKIN = 15, SKIN_SH = 16;
+const BEARD = 17, BEARD_SH = 18, WOOD = 19, WOOD_D = 20;
+const M_WHITE = 21, M_CYAN = 22, M_BLUE = 23, M_VIOLET = 24, M_DARK = 25;
+const RAMP = new Uint8Array([M_WHITE, M_CYAN, M_BLUE, M_VIOLET, M_DARK]);
+
+const EMPTY = 255, OUT_MARK = 253, SOLID_MAX = 250;
+
+// ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
+const W = 128, H = 96, N_PIX = W * H;
+const FLOOR_Y = 80;
+const WX = 26;
+
+const bg = new Uint8Array(N_PIX);
+const fb = new Uint8Array(N_PIX);
+const sp = new Uint8Array(N_PIX);
+
+const off = document.createElement('canvas');
+off.width = W; off.height = H;
+const octx = off.getContext('2d');
+const img = octx.createImageData(W, H);
+const out32 = new Uint32Array(img.data.buffer);
+
+const pal32 = new Uint32Array(PAL.length);
+const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+for (let i = 0; i < PAL.length; i++) {
+  const v = parseInt(PAL[i].slice(1), 16);
+  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+  pal32[i] = littleEndian
+    ? ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | 255) >>> 0;
+}
+
+const screen = document.getElementById('screen');
+const sctx = screen.getContext('2d', { alpha: false });
+let scale = 1, offX = 0, offY = 0, dirty = true;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.floor(window.innerWidth * dpr);
+  const ch = Math.floor(window.innerHeight * dpr);
+  screen.width = cw;
+  screen.height = ch;
+  screen.style.width = (cw / dpr) + 'px';
+  screen.style.height = (ch / dpr) + 'px';
+  scale = Math.max(1, Math.floor(Math.min(cw / W, ch / H)));
+  offX = (cw - W * scale) >> 1;
+  offY = (ch - H * scale) >> 1;
+  sctx.imageSmoothingEnabled = false;
+  dirty = true;
+}
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------
+// Pixel primitives (integer-snapped, bounds-checked)
+// ---------------------------------------------------------------------------
+function pset(buf, x, y, c) {
+  x = Math.round(x) | 0; y = Math.round(y) | 0;
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  buf[y * W + x] = c;
+}
+
+function hrun(buf, x0, x1, y, c) {
+  if (y < 0 || y >= H) return;
+  if (x0 < 0) x0 = 0;
+  if (x1 > W - 1) x1 = W - 1;
+  const row = y * W;
+  for (let x = x0; x <= x1; x++) buf[row + x] = c;
+}
+
+function rect(buf, x, y, w, h, c) {
+  for (let j = 0; j < h; j++) hrun(buf, x, x + w - 1, y + j, c);
+}
+
+// Bresenham with an optional square brush (size 1..3) whose top-left is at (-bo,-bo).
+function line(buf, x0, y0, x1, y1, c, brush) {
+  x0 = Math.round(x0) | 0; y0 = Math.round(y0) | 0; x1 = Math.round(x1) | 0; y1 = Math.round(y1) | 0;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  const bo = brush > 1 ? (brush - 1) >> 1 : 0;
+  let err = dx + dy;
+  for (;;) {
+    if (brush > 1) rect(buf, x0 - bo, y0 - bo, brush, brush, c);
+    else pset(buf, x0, y0, c);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+function ring(buf, cx, cy, r, c, gapMask) {
+  let x = r, y = 0, err = 1 - r, n = 0;
+  while (x >= y) {
+    if ((n++ & gapMask) === 0) {
+      pset(buf, cx + x, cy + y, c); pset(buf, cx - x, cy + y, c);
+      pset(buf, cx + x, cy - y, c); pset(buf, cx - x, cy - y, c);
+      pset(buf, cx + y, cy + x, c); pset(buf, cx - y, cy + x, c);
+      pset(buf, cx + y, cy - x, c); pset(buf, cx - y, cy - x, c);
+    }
+    y++;
+    if (err < 0) err += 2 * y + 1;
+    else { x--; err += 2 * (y - x) + 1; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic RNG (xorshift32), allocation-free
+// ---------------------------------------------------------------------------
+// Seed and float state live in typed arrays: V8 boxes non-Smi numbers stored in
+// closure variables, which would allocate on every write.
+// rndi() returns a Smi in [0, 2^30); multiply by RS at the call site for [0, 1).
+const SEED = new Int32Array([0x9e3779b9 | 0]);
+const RS = 1 / 1073741824;
+function rndi() {
+  let s = SEED[0];
+  s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+  SEED[0] = s;
+  return s >>> 2;
+}
+
+// ---------------------------------------------------------------------------
+// Static background (built once)
+// ---------------------------------------------------------------------------
+const BAYER = new Uint8Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]);
+const MOON_X = 100, MOON_Y = 18, MOON_R = 7;
+
+function buildBackground() {
+  for (let y = 0; y < FLOOR_Y; y++) {
+    const f = Math.pow(y / FLOOR_Y, 1.15) * 3.6;
+    const band = Math.floor(f);
+    // Solid bands with an ordered-dither seam in the last 40% of each band.
+    const t = Math.max(0, (f - band - 0.6) / 0.4);
+    for (let x = 0; x < W; x++) {
+      const thr = (BAYER[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
+      let c = band + (t > thr ? 1 : 0);
+      if (c > SKY3) c = SKY3;
+      bg[y * W + x] = c;
+    }
+  }
+
+  for (let y = MOON_Y - 14; y <= MOON_Y + 14; y++) {
+    for (let x = MOON_X - 14; x <= MOON_X + 14; x++) {
+      if (x < 0 || y < 0 || x >= W || y >= FLOOR_Y) continue;
+      const dx = x - MOON_X, dy = y - MOON_Y, d2 = dx * dx + dy * dy;
+      const i = y * W + x;
+      if (d2 <= MOON_R * MOON_R + MOON_R) {
+        const sx = x - (MOON_X - 3), sy = y - (MOON_Y - 2);
+        bg[i] = (sx * sx + sy * sy > (MOON_R + 1) * (MOON_R + 1)) ? MOON_SH : MOON;
+      } else if (d2 < 11 * 11) {
+        if (((x + y) & 1) === 0) bg[i] = SKY2;
+      } else if (d2 < 14 * 14) {
+        if (((x + y) & 1) === 0 && (y & 1) === 0 && bg[i] < SKY1) bg[i] = SKY1;
+      }
+    }
+  }
+  bg[(MOON_Y - 2) * W + MOON_X - 2] = MOON_SH;
+  bg[(MOON_Y - 2) * W + MOON_X - 1] = MOON_SH;
+  bg[(MOON_Y + 1) * W + MOON_X - 4] = MOON_SH;
+  bg[(MOON_Y + 2) * W + MOON_X + 1] = MOON_SH;
+  bg[(MOON_Y - 4) * W + MOON_X + 2] = MOON_SH;
+
+  for (let x = 0; x < W; x++) {
+    const h = 5 + Math.round(3 * Math.sin(x * 0.07 + 1.3) + 2 * Math.sin(x * 0.19 + 0.4));
+    for (let y = FLOOR_Y - h; y < FLOOR_Y; y++) bg[y * W + x] = SKY1;
+  }
+
+  for (let x = 0; x < W; x++) {
+    bg[FLOOR_Y * W + x] = (x % 12 === 7) ? STONE_M : STONE_L;
+    bg[(FLOOR_Y + 1) * W + x] = STONE_M;
+  }
+  for (let y = FLOOR_Y + 2; y < H; y++) {
+    const ry = y - (FLOOR_Y + 2);
+    const bi = (ry / 5) | 0;
+    const inBrick = ry % 5;
+    for (let x = 0; x < W; x++) {
+      const deep = y >= 92 || (y >= 89 && ((x + y) & 1) === 0);
+      const base = deep ? STONE_D : STONE_M;
+      const mortar = deep ? OUTLINE : STONE_D;
+      const bx = (x + (bi & 1) * 6) % 12;
+      let c = base;
+      if (inBrick === 4 || bx === 0) c = mortar;
+      else if (inBrick === 0 && bx === 1 && !deep) c = STONE_L;
+      bg[y * W + x] = c;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stars
+// ---------------------------------------------------------------------------
+const N_STARS = 34;
+const starX = new Uint8Array(N_STARS), starY = new Uint8Array(N_STARS);
+const starP = new Uint16Array(N_STARS), starPh = new Uint16Array(N_STARS);
+
+function buildStars() {
+  for (let s = 0; s < N_STARS; s++) {
+    let x, y;
+    for (;;) {
+      x = 2 + (((rndi() * RS) * (W - 4)) | 0);
+      y = 2 + (((rndi() * RS) * 56) | 0);
+      const dx = x - MOON_X, dy = y - MOON_Y;
+      if (dx * dx + dy * dy > 16 * 16) break;
+    }
+    starX[s] = x; starY[s] = y;
+    starP[s] = 48 + (((rndi() * RS) * 96) | 0);
+    starPh[s] = ((rndi() * RS) * 200) | 0;
+  }
+}
+
+function drawStars(tick) {
+  const qt = tick - (tick % 4);
+  for (let s = 0; s < N_STARS; s++) {
+    const x = starX[s], y = starY[s];
+    const v = ((qt + starPh[s]) % starP[s]) / starP[s];
+    let c = STAR_DIM;
+    if (v < 0.12) c = MOON;
+    else if (v < 0.45) c = STONE_L;
+    fb[y * W + x] = c;
+    if (s < 4 && c === MOON) {
+      fb[y * W + x - 1] = STAR_DIM; fb[y * W + x + 1] = STAR_DIM;
+      fb[(y - 1) * W + x] = STAR_DIM; fb[(y + 1) * W + x] = STAR_DIM;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Particle pool (preallocated, reused, no allocation after init)
+// ---------------------------------------------------------------------------
+const NP = 512;
+const pMode = new Uint8Array(NP);  // 0 dead, 1 orbit, 2 free
+const pX = new Float32Array(NP), pY = new Float32Array(NP);
+const pVX = new Float32Array(NP), pVY = new Float32Array(NP);
+const pLife = new Float32Array(NP), pMax = new Float32Array(NP);
+const pDrag = new Float32Array(NP), pGrav = new Float32Array(NP);
+const pAng = new Float32Array(NP), pRad = new Float32Array(NP);
+const pAV = new Float32Array(NP), pShrink = new Float32Array(NP);
+let pCursor = 0;
+
+function allocParticle() {
+  for (let k = 0; k < NP; k++) {
+    const i = (pCursor + k) % NP;
+    if (pMode[i] === 0) { pCursor = (i + 1) % NP; return i; }
+  }
+  return -1;
+}
+
+// Callers fill pX/pY/pVX/pVY directly: passing doubles as call arguments boxes them.
+function spawnFree(life, drag, grav) {
+  const i = allocParticle();
+  if (i < 0) return -1;
+  pMode[i] = 2; pLife[i] = life; pMax[i] = life; pDrag[i] = drag; pGrav[i] = grav;
+  return i;
+}
+
+function spawnOrbit(cx, cy) {
+  const i = allocParticle();
+  if (i < 0) return;
+  pMode[i] = 1;
+  pAng[i] = (rndi() * RS) * Math.PI * 2;
+  pRad[i] = 10 + (rndi() * RS) * 9;
+  pAV[i] = 0.09 + (rndi() * RS) * 0.08;
+  pShrink[i] = 0.16 + (rndi() * RS) * 0.12;
+  pLife[i] = pMax[i] = Math.ceil(pRad[i] / pShrink[i]);
+  pX[i] = cx + Math.cos(pAng[i]) * pRad[i];
+  pY[i] = cy + Math.sin(pAng[i]) * pRad[i];
+}
+
+function updateParticles(cx, cy) {
+  for (let i = 0; i < NP; i++) {
+    const m = pMode[i];
+    if (m === 0) continue;
+    pLife[i] -= 1;
+    if (pLife[i] <= 0) { pMode[i] = 0; continue; }
+    if (m === 1) {
+      pAng[i] += pAV[i];
+      pRad[i] -= pShrink[i];
+      if (pRad[i] <= 0.5) { pMode[i] = 0; continue; }
+      pX[i] = cx + Math.cos(pAng[i]) * pRad[i];
+      pY[i] = cy + Math.sin(pAng[i]) * pRad[i];
+    } else {
+      pVX[i] *= pDrag[i];
+      pVY[i] = pVY[i] * pDrag[i] + pGrav[i];
+      pX[i] += pVX[i];
+      pY[i] += pVY[i];
+      if (pY[i] > FLOOR_Y - 1) { pY[i] = FLOOR_Y - 1; pVY[i] *= -0.35; pVX[i] *= 0.7; }
+      if (pX[i] < -4 || pX[i] > W + 4 || pY[i] < -4) pMode[i] = 0;
+    }
+  }
+}
+
+// Releases every orbiting spark outward along its tangent + radial direction.
+function releaseOrbiters() {
+  for (let i = 0; i < NP; i++) {
+    if (pMode[i] !== 1) continue;
+    const a = pAng[i], s = 0.8 + (rndi() * RS) * 1.2;
+    pMode[i] = 2;
+    pVX[i] = Math.cos(a) * s - Math.sin(a) * pAV[i] * pRad[i] + 0.3;
+    pVY[i] = Math.sin(a) * s + Math.cos(a) * pAV[i] * pRad[i];
+    pLife[i] = pMax[i] = 18 + (((rndi() * RS) * 22) | 0);
+    pDrag[i] = 0.93; pGrav[i] = 0.015;
+  }
+}
+
+function drawParticles() {
+  for (let i = 0; i < NP; i++) {
+    if (pMode[i] === 0) continue;
+    let k = ((1 - pLife[i] / pMax[i]) * 5) | 0;
+    if (k > 4) k = 4;
+    const x = Math.round(pX[i]) | 0, y = Math.round(pY[i]) | 0;
+    pset(fb, x, y, RAMP[k]);
+    if (pMode[i] === 2 && k < 4) {
+      const vx = pVX[i], vy = pVY[i];
+      if (vx * vx + vy * vy > 1) {
+        const tx = vx > 0.4 ? -1 : vx < -0.4 ? 1 : 0;
+        const ty = vy > 0.4 ? -1 : vy < -0.4 ? 1 : 0;
+        pset(fb, x + tx, y + ty, RAMP[k + 1]);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// State machine & pose
+// ---------------------------------------------------------------------------
+const IDLE = 0, CHARGE = 1, CAST = 2, RECOVER = 3;
+const DUR = new Uint16Array([150, 96, 36, 66]);
+const POSE_STEP = 6; // 60hz / 6 = 10 fps pose sampling
+
+// armRaise, armReach, staffAngle, headTilt, lean, robeSway
+const P_IDLE   = new Float32Array([0.00, 0.00,  0.12,  0, 0,  0.0]);
+const P_CHARGE = new Float32Array([1.00, 0.30, -0.10, -1, -1, -0.8]);
+const P_CAST   = new Float32Array([0.45, 1.00,  1.05,  1, 1,  0.9]);
+const pose = new Float32Array(6);
+
+let state = IDLE, st = 0, tick = 0;
+let bob = 0, beardSway = 0;
+let gemX = 0, gemY = 0;
+let flashT = 0, shakeT = 0, shakeX = 0, shakeY = 0, castT = 99;
+let prActive = 0, prY = 0, prY0 = 0, prAge = 0;
+
+let handX = 0, handY = 0, staffTopX = 0, staffTopY = 0, staffBotX = 0, staffBotY = 0;
+
+const F = new Float64Array(8);
+const F_RIM = 0, F_GLOW = 1, F_PRX = 2, F_SIN = 3, F_COS = 4, F_LAST = 5, F_ACC = 6, F_EASE = 7;
+F[F_RIM] = 0.25; F[F_COS] = 1; F[F_LAST] = -1;
+
+const SMOOTH = 0, BACK = 1;
+// Eases q/d (integer inputs) and leaves the result in F[F_EASE].
+function ease(kind, q, d) {
+  let t = q / d;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  if (kind === SMOOTH) { F[F_EASE] = t * t * (3 - 2 * t); return; }
+  const u = t - 1;
+  F[F_EASE] = 1 + 2.70158 * u * u * u + 1.70158 * u * u;
+}
+function lerpPose(a, b) {
+  const e = F[F_EASE];
+  for (let i = 0; i < 6; i++) pose[i] = a[i] + (b[i] - a[i]) * e;
+}
+
+function enterState(s) {
+  state = s; st = 0;
+}
+
+// Fires on the first CAST pose frame where the staff is thrust forward.
+function releaseSpell() {
+  releaseOrbiters();
+  for (let n = 0; n < 72; n++) {
+    const i = spawnFree(18 + (((rndi() * RS) * 30) | 0), 0.94, 0.02);
+    if (i < 0) break;
+    const a = (rndi() * RS) * Math.PI * 2, s = 0.5 + (rndi() * RS) * 1.9;
+    pX[i] = gemX; pY[i] = gemY;
+    pVX[i] = Math.cos(a) * s + 0.35; pVY[i] = Math.sin(a) * s;
+  }
+  flashT = 3; shakeT = 16; castT = 0;
+  prActive = 1; F[F_PRX] = gemX + 2; prY0 = gemY; prY = gemY; prAge = 0;
+}
+
+function computePose() {
+  const q = st - (st % POSE_STEP);
+  const gq = tick - (tick % POSE_STEP);
+  bob = 0;
+  if (state === IDLE) {
+    for (let i = 0; i < 6; i++) pose[i] = P_IDLE[i];
+    bob = ((q / 30) | 0) & 1;
+    pose[5] += Math.sin(gq * 0.045) * 0.6;
+  } else if (state === CHARGE) {
+    ease(SMOOTH, q * 5, DUR[CHARGE] * 3);
+    lerpPose(P_IDLE, P_CHARGE);
+    if (q * 20 > DUR[CHARGE] * 11) pose[0] += ((q / POSE_STEP) & 1) ? 0.13 : -0.13;
+  } else if (state === CAST) {
+    ease(BACK, q, 10);
+    lerpPose(P_CHARGE, P_CAST);
+  } else {
+    ease(SMOOTH, q, DUR[RECOVER] - POSE_STEP);
+    lerpPose(P_CAST, P_IDLE);
+  }
+  beardSway = Math.round(Math.sin(gq * 0.045 - 0.9) * 1.2 - pose[4] * 0.6) | 0;
+
+  const ox = WX, oy = FLOOR_Y;
+  handX = ox + (Math.round(5 + pose[1] * 5) | 0);
+  handY = oy - 11 - (Math.round(pose[0] * 8) | 0) + bob;
+  const staffSin = F[F_SIN] = Math.sin(pose[2]);
+  const staffCos = F[F_COS] = Math.cos(pose[2]);
+  staffTopX = Math.round(handX + staffSin * 18) | 0;
+  staffTopY = Math.round(handY - staffCos * 18) | 0;
+  staffBotX = Math.round(handX - staffSin * 10) | 0;
+  staffBotY = Math.round(handY + staffCos * 10) | 0;
+  gemX = Math.round(handX + staffSin * 20.5) | 0;
+  gemY = Math.round(handY - staffCos * 20.5) | 0;
+
+  const f = st / DUR[state];
+  if (state === IDLE) { F[F_RIM] = 0.25; F[F_GLOW] = 0; }
+  else if (state === CHARGE) { F[F_RIM] = 0.3 + 0.6 * f; F[F_GLOW] = f; }
+  else if (state === CAST) { F[F_RIM] = 1 - 0.25 * f; F[F_GLOW] = 1; }
+  else {
+    ease(SMOOTH, st, DUR[RECOVER]);
+    F[F_RIM] = 0.75 - 0.5 * F[F_EASE];
+    ease(SMOOTH, st * 7, DUR[RECOVER] * 5);
+    F[F_GLOW] = 1 - F[F_EASE];
+  }
+}
+
+function update() {
+  tick++; st++;
+  if (st >= DUR[state]) enterState((state + 1) & 3);
+  computePose();
+
+  if (state === CHARGE) {
+    const f = st / DUR[CHARGE];
+    if ((rndi() * RS) < 0.35 + 0.65 * f) spawnOrbit(gemX, gemY);
+    if (f > 0.5 && (rndi() * RS) < f - 0.4) spawnOrbit(gemX, gemY);
+  }
+
+  if (state === CAST && st === POSE_STEP) releaseSpell();
+  if (prActive) {
+    prAge++;
+    const prX = F[F_PRX] += 1.8;
+    prY = prY0 + (Math.round(Math.sin(prAge * 0.3)) | 0);
+    for (let n = 0; n < 2; n++) {
+      const i = spawnFree(10 + (((rndi() * RS) * 14) | 0), 0.9, 0.004);
+      if (i < 0) break;
+      pX[i] = prX - 2 - (rndi() * RS) * 2; pY[i] = prY + ((rndi() * RS) - 0.5) * 3;
+      pVX[i] = -0.25 - (rndi() * RS) * 0.4; pVY[i] = ((rndi() * RS) - 0.5) * 0.35;
+    }
+    if (prX > W + 6) prActive = 0;
+  }
+
+  updateParticles(gemX, gemY);
+
+  if (flashT > 0) flashT--;
+  if (castT < 99) castT++;
+  if (shakeT > 0) {
+    shakeT--;
+    if ((shakeT & 1) === 0) {
+      const amp = shakeT > 7 ? 2 : 1;
+      shakeX = (rndi() * RS) < 0.5 ? -amp : amp;
+      shakeY = (((rndi() * RS) * 3) | 0) - 1;
+    }
+    if (shakeT === 0) { shakeX = 0; shakeY = 0; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wizard (drawn procedurally into the sprite layer each frame)
+// ---------------------------------------------------------------------------
+const BEARD_L = new Int8Array([-1, -2, -2, -2, -2, -2, -1, -1, 0, 0, 1, 1]);
+const BEARD_R = new Int8Array([ 3,  3,  3,  3,  3,  3,  2,  2, 2, 2, 1, 1]);
+const HAT_W   = new Int8Array([7, 7, 6, 6, 5, 4, 4, 3, 2]);
+const HAT_OFF = new Int8Array([0, 0, 0, 0, 0, -1, -1, -2, -3]);
+
+function drawWizard() {
+  const ox = WX, oy = FLOOR_Y;
+  const L = pose[4], S = pose[5];
+  const Lr = Math.round(L) | 0;
+  const tilt = Math.round(pose[3]) | 0;
+
+  // Robe: trapezoid rows, top follows lean, hem follows sway.
+  const top = oy - 18 + bob, bot = oy - 2, n = bot - top;
+  for (let r = 0; r <= n; r++) {
+    const y = top + r, f = r / n;
+    const o = Math.round(L * (1 - f) + S * f) | 0;
+    let hl, hr;
+    if (r === 0) { hl = 2; hr = 2; }
+    else if (r === 1) { hl = 3; hr = 3; }
+    else { hl = 3 + ((r * 4 / n) | 0); hr = 3 + ((r * 3 / n) | 0); }
+    if (r >= n - 1) { hl++; hr++; }
+    const xl = ox - hl + o, xr = ox + hr + o, split = ox - 1 + o;
+    if (r === n) {
+      hrun(sp, xl, split, y, GOLD_D);
+      hrun(sp, split + 1, xr, y, GOLD_L);
+    } else if (r === 6) {
+      hrun(sp, xl, split, y, GOLD_D);
+      hrun(sp, split + 1, xr, y, GOLD_L);
+      pset(sp, ox + 1 + o, y, MOON);
+    } else {
+      hrun(sp, xl, split, y, ROBE_D);
+      hrun(sp, split + 1, xr, y, ROBE_M);
+      if (r > n / 2 && (r & 1)) pset(sp, ox + 3 + o, y, ROBE_D);
+      if (r > 8 && r < n - 1) pset(sp, split + 1, y, ROBE_D);
+    }
+  }
+  hrun(sp, ox - 4, ox - 2, oy - 1, WOOD_D);
+  hrun(sp, ox + 2, ox + 5, oy - 1, WOOD_D);
+
+  // Staff (behind the hand, in front of the robe).
+  line(sp, staffBotX - 1, staffBotY, staffTopX - 1, staffTopY, WOOD_D, 1);
+  line(sp, staffBotX, staffBotY, staffTopX, staffTopY, WOOD, 1);
+  pset(sp, staffTopX, staffTopY, GOLD_D);
+  const staffSin = F[F_SIN], staffCos = F[F_COS];
+  const clawX = Math.round(handX + staffSin * 19.5) | 0, clawY = Math.round(handY - staffCos * 19.5) | 0;
+  const perpX = Math.round(staffCos * 1.6) | 0, perpY = Math.round(staffSin * 1.6) | 0;
+  pset(sp, clawX + perpX, clawY + perpY, GOLD_L);
+  pset(sp, clawX - perpX, clawY - perpY, GOLD_L);
+
+  // Front sleeve and hand.
+  const shX = ox + 2 + Lr, shY = oy - 16 + bob;
+  const wrX = handX - 1, wrY = handY;
+  line(sp, shX, shY, wrX, wrY, ROBE_D, 3);
+  line(sp, shX - 1, shY - 1, wrX - 1, wrY - 1, ROBE_M, 2);
+  pset(sp, wrX, wrY - 1, GOLD_L);
+  pset(sp, wrX, wrY, GOLD_D);
+  pset(sp, wrX, wrY + 1, GOLD_D);
+  rect(sp, handX, handY - 1, 2, 2, SKIN);
+  pset(sp, handX, handY, SKIN_SH);
+
+  // Head.
+  const hx = ox + 1 + Lr + tilt, hy = oy - 23 + bob;
+  rect(sp, hx - 2, hy, 5, 5, SKIN);
+  hrun(sp, hx - 2, hx - 2, hy + 2, SKIN_SH);
+  pset(sp, hx - 2, hy + 3, SKIN_SH);
+  pset(sp, hx + 3, hy + 2, SKIN);
+  pset(sp, hx + 3, hy + 3, SKIN_SH);
+  rect(sp, hx - 3, hy, 1, 4, BEARD_SH);
+  pset(sp, hx - 2, hy, BEARD); pset(sp, hx - 2, hy + 1, BEARD);
+  hrun(sp, hx, hx + 2, hy, BEARD);
+  pset(sp, hx + 1, hy + 1, OUTLINE);
+
+  // Beard: long, tapering, lower strands sway.
+  for (let r = 0; r < 12; r++) {
+    const y = hy + 3 + r;
+    const o = r >= 4 ? Math.round(beardSway * (r - 3) / 8) | 0 : 0;
+    const xl = hx + BEARD_L[r] + o, xr = hx + BEARD_R[r] + o;
+    hrun(sp, xl, xr, y, BEARD);
+    pset(sp, xl, y, BEARD_SH);
+    if (r >= 4 && r <= 9 && (r & 1)) pset(sp, hx + 1 + o, y, BEARD_SH);
+  }
+
+  // Hat: brim, band, cone that bends back, drooping tip.
+  hrun(sp, hx - 4, hx + 5, hy - 1, ROBE_D);
+  hrun(sp, hx - 5, hx + 4, hy - 2, ROBE_M);
+  pset(sp, hx - 5, hy - 2, ROBE_D);
+  hrun(sp, hx - 3, hx - 1, hy - 3, GOLD_D);
+  hrun(sp, hx, hx + 3, hy - 3, GOLD_L);
+  const tipLag = -Lr;
+  let tipStart = 0;
+  for (let k = 0; k < 9; k++) {
+    const y = hy - 4 - k, w = HAT_W[k];
+    const o = HAT_OFF[k] + (k >= 6 ? tipLag : 0);
+    const x0 = hx + o - (w >> 1), x1 = x0 + w - 1;
+    const darkW = w >= 5 ? 2 : 1;
+    hrun(sp, x0, x0 + darkW - 1, y, ROBE_D);
+    hrun(sp, x0 + darkW, x1, y, ROBE_M);
+    if (k === 8) tipStart = x0;
+  }
+  pset(sp, hx + 1, hy - 6, GOLD_L);
+  pset(sp, tipStart - 1, hy - 12, ROBE_M);
+  pset(sp, tipStart - 2, hy - 11, ROBE_D);
+  pset(sp, tipStart - 3, hy - 10, ROBE_D);
+}
+
+function outlinePass() {
+  for (let y = 1; y < H - 1; y++) {
+    const row = y * W;
+    for (let x = 1; x < W - 1; x++) {
+      const i = row + x;
+      if (sp[i] !== EMPTY) continue;
+      if (sp[i - 1] < SOLID_MAX || sp[i + 1] < SOLID_MAX ||
+          sp[i - W] < SOLID_MAX || sp[i + W] < SOLID_MAX) sp[i] = OUT_MARK;
+    }
+  }
+}
+
+// 1px rim on edge pixels whose neighbour toward the gem is outside the silhouette.
+function rimPass() {
+  const rim = F[F_RIM];
+  const R = 10 + 34 * rim, R2 = R * R, near2 = R2 * 0.2;
+  for (let y = 1; y < H - 1; y++) {
+    const row = y * W;
+    for (let x = 1; x < W - 1; x++) {
+      const i = row + x;
+      const v = sp[i];
+      if (v >= SOLID_MAX || v === WOOD || v === WOOD_D) continue;
+      const dx = gemX - x, dy = gemY - y, d2 = dx * dx + dy * dy;
+      if (d2 > R2) continue;
+      const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+      const sx = ax * 2 >= ay ? (dx > 0 ? 1 : dx < 0 ? -1 : 0) : 0;
+      const sy = ay * 2 >= ax ? (dy > 0 ? 1 : dy < 0 ? -1 : 0) : 0;
+      if ((sx !== 0 && sp[i + sx] >= SOLID_MAX) || (sy !== 0 && sp[i + sy * W] >= SOLID_MAX)) {
+        let c = M_VIOLET;
+        if (rim > 0.9 && d2 < near2) c = M_WHITE;
+        else if (rim > 0.6 && d2 < near2 * 2.5) c = M_CYAN;
+        else if (rim > 0.45) c = M_BLUE;
+        sp[i] = c;
+      }
+    }
+  }
+}
+
+function compositeSprite() {
+  for (let i = 0; i < N_PIX; i++) {
+    const v = sp[i];
+    if (v !== EMPTY) fb[i] = v === OUT_MARK ? OUTLINE : v;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Magic FX
+// ---------------------------------------------------------------------------
+function drawGlow() {
+  const glow = F[F_GLOW];
+  if (glow <= 0.05) return;
+  const R = 2 + Math.round(glow * 6), R2 = R * R, inner = R2 * 0.3;
+  const par = (tick >> 2) & 1;
+  for (let y = gemY - R; y <= gemY + R; y++) {
+    if (y < 0 || y >= H) continue;
+    for (let x = gemX - R; x <= gemX + R; x++) {
+      if (x < 0 || x >= W) continue;
+      const i = y * W + x;
+      if (sp[i] !== EMPTY || ((x + y + par) & 1)) continue;
+      const dx = x - gemX, dy = y - gemY, d2 = dx * dx + dy * dy;
+      if (d2 > R2) continue;
+      fb[i] = d2 < inner ? M_BLUE : (fb[i] < SKY3 ? M_DARK : M_VIOLET);
+    }
+  }
+}
+
+function drawGem() {
+  let core = M_CYAN, arm = M_BLUE, big = 0;
+  if (state === IDLE) {
+    if (((tick + 20) % 90) < 6) core = M_WHITE;
+  } else if (state === CHARGE) {
+    const flick = ((tick >> 1) & 1) ^ ((rndi() * RS) < 0.2 ? 1 : 0);
+    core = flick ? M_WHITE : M_CYAN;
+    arm = flick ? M_CYAN : M_BLUE;
+    big = st > DUR[CHARGE] * 0.5 ? 1 : 0;
+  } else if (state === CAST) {
+    core = M_WHITE; arm = st < 10 ? M_WHITE : M_CYAN; big = 1;
+  } else if (st < 20) {
+    core = M_WHITE;
+  }
+  if (big) {
+    pset(fb, gemX - 2, gemY, M_BLUE); pset(fb, gemX + 2, gemY, M_BLUE);
+    pset(fb, gemX, gemY - 2, M_BLUE); pset(fb, gemX, gemY + 2, M_BLUE);
+  }
+  pset(fb, gemX - 1, gemY, arm); pset(fb, gemX + 1, gemY, arm);
+  pset(fb, gemX, gemY - 1, arm); pset(fb, gemX, gemY + 1, arm);
+  pset(fb, gemX, gemY, core);
+}
+
+function drawBurst() {
+  if (castT >= 14) return;
+  if (castT < 4) {
+    const r = 4 - castT;
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++)
+        if (x * x + y * y <= r * r + 1) pset(fb, gemX + x, gemY + y, M_WHITE);
+  }
+  const r = 2 + Math.round(castT * 1.6);
+  const c = castT < 4 ? M_WHITE : castT < 8 ? M_CYAN : M_BLUE;
+  ring(fb, gemX, gemY, r, c, castT < 8 ? 0 : 1);
+  if (castT > 2 && castT < 10) ring(fb, gemX, gemY, r - 3, M_VIOLET, 1);
+}
+
+function drawProjectile() {
+  if (!prActive) return;
+  const x = Math.round(F[F_PRX]) | 0, y = prY;
+  for (let dx = -6; dx <= 6; dx++) {
+    const fx = x + dx;
+    if (fx < 0 || fx >= W) continue;
+    const i = FLOOR_Y * W + fx;
+    if (fb[i] === STONE_L || fb[i] === STONE_M) fb[i] = (dx > -3 && dx < 3) ? M_BLUE : M_VIOLET;
+  }
+  const fr = (tick >> 2) & 1;
+  pset(fb, x - 3, y, M_BLUE);
+  pset(fb, x - 2, y - 1, M_BLUE); pset(fb, x - 2, y + 1, M_BLUE);
+  rect(fb, x - 2, y, 1, 1, M_CYAN);
+  rect(fb, x - 1, y - 1, 3, 3, M_CYAN);
+  pset(fb, x, y - 2, M_CYAN); pset(fb, x, y + 2, M_CYAN); pset(fb, x + 2, y, M_CYAN);
+  rect(fb, x - 1, y, 2, 1, M_WHITE);
+  pset(fb, x, y - 1, M_WHITE);
+  if (fr) { pset(fb, x + 1, y - 3, M_WHITE); pset(fb, x - 1, y + 3, M_CYAN); }
+  else { pset(fb, x + 3, y + 1, M_WHITE); pset(fb, x - 2, y - 3, M_CYAN); }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+function renderLogical() {
+  fb.set(bg);
+  if (flashT > 0) {
+    for (let i = 0; i < FLOOR_Y * W; i++) { const v = fb[i]; if (v <= SKY3) fb[i] = v + 1; }
+  }
+  drawStars(tick);
+
+  hrun(fb, WX - 7, WX + 8, FLOOR_Y, STONE_M);
+  hrun(fb, WX - 5, WX + 6, FLOOR_Y + 1, STONE_D);
+
+  sp.fill(EMPTY);
+  drawWizard();
+  outlinePass();
+  rimPass();
+  compositeSprite();
+
+  drawGlow();
+  drawGem();
+  drawBurst();
+  drawParticles();
+  drawProjectile();
+
+  for (let y = 0; y < H; y++) {
+    let sy = y - shakeY;
+    if (sy < 0) sy = 0; else if (sy >= H) sy = H - 1;
+    const srow = sy * W, drow = y * W;
+    for (let x = 0; x < W; x++) {
+      let sx = x - shakeX;
+      if (sx < 0) sx = 0; else if (sx >= W) sx = W - 1;
+      out32[drow + x] = pal32[fb[srow + sx]];
+    }
+  }
+  octx.putImageData(img, 0, 0);
+}
+
+function present() {
+  sctx.fillStyle = PAL[0];
+  sctx.fillRect(0, 0, screen.width, screen.height);
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(off, 0, 0, W, H, offX, offY, W * scale, H * scale);
+}
+
+// ---------------------------------------------------------------------------
+// Fixed 60hz timestep, rAF presentation
+// ---------------------------------------------------------------------------
+const STEP = 1000 / 60;
+
+function frame(now) {
+  if (F[F_LAST] < 0) F[F_LAST] = now;
+  let dt = now - F[F_LAST];
+  F[F_LAST] = now;
+  if (dt > 250) dt = 250;
+  F[F_ACC] += dt;
+  let stepped = false;
+  while (F[F_ACC] >= STEP) { update(); F[F_ACC] -= STEP; stepped = true; }
+  if (stepped) { renderLogical(); dirty = true; }
+  if (dirty) { present(); dirty = false; }
+  requestAnimationFrame(frame);
+}
+
+// Run every code path before the first visible frame so the JIT has complete type
+// feedback; otherwise late-first branches deopt and box doubles for a while.
+function warmUp() {
+  const loop = DUR[0] + DUR[1] + DUR[2] + DUR[3];
+  for (let n = 0; n < loop * 2; n++) { update(); renderLogical(); }
+  pMode.fill(0);
+  state = IDLE; st = 0; tick = 0;
+  prActive = 0; flashT = 0; shakeT = 0; shakeX = 0; shakeY = 0; castT = 99;
+}
+
+buildBackground();
+buildStars();
+resize();
+warmUp();
+computePose();
+renderLogical();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
