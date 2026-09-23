@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orc Warlord</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0a0916; }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<script>
+(() => {
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Palette. Every pixel on screen is an index into this table.
+// ---------------------------------------------------------------------------
+const PAL = [
+  '#0a0916', // 0  sky darkest
+  '#12122b', // 1  sky dark / silhouettes
+  '#1b1a3d', // 2  sky mid
+  '#272654', // 3  sky horizon
+  '#3a3870', // 4  dim star
+  '#e9ecf5', // 5  moon / brightest edge
+  '#b7bcd6', // 6  moon shade / moonlit edge
+  '#6b6a86', // 7  stone light
+  '#47465f', // 8  stone mid
+  '#2e2c42', // 9  stone dark
+  '#120e1a', // 10 outline
+  '#3b5230', // 11 skin dark
+  '#62803c', // 12 skin
+  '#8fa458', // 13 skin light
+  '#2f3140', // 14 iron dark
+  '#565a6e', // 15 iron
+  '#8c92aa', // 16 iron light
+  '#d9cfa6', // 17 bone
+  '#9a8f6c', // 18 bone shade
+  '#521820', // 19 crimson dark
+  '#93262e', // 20 crimson
+  '#3e2618', // 21 leather dark
+  '#6e4a2e', // 22 leather
+  '#fff1a8', // 23 ember pale
+  '#ffab2e', // 24 ember orange
+  '#e2401f', // 25 ember red
+  '#5e1414', // 26 ember dark
+];
+
+const SKY1 = 1, SKY2 = 2, SKY3 = 3, STAR_DIM = 4, MOON = 5, MOON_SH = 6;
+const STONE_L = 7, STONE_M = 8, STONE_D = 9, OUTLINE = 10;
+const SKIN_D = 11, SKIN = 12, SKIN_L = 13, IRON_D = 14, IRON = 15, IRON_L = 16;
+const BONE = 17, BONE_SH = 18, CLOTH_D = 19, CLOTH = 20, LEATH_D = 21, LEATH = 22;
+const EM_Y = 23, EM_O = 24, EM_R = 25, EM_D = 26;
+const EMBER_RAMP = new Uint8Array([EM_Y, EM_O, EM_R, EM_D]);
+const DUST_RAMP = new Uint8Array([STONE_L, STONE_M, STONE_D]);
+
+const EMPTY = 255, OUT_MARK = 253, SOLID_MAX = 250;
+
+// ---------------------------------------------------------------------------
+// Buffers & display
+// ---------------------------------------------------------------------------
+const W = 128, H = 96, N_PIX = W * H;
+const FLOOR_Y = 82;           // top row of the floor; feet stand on FLOOR_Y - 1
+const ANKLE_Y = FLOOR_Y - 4;  // ankle height when the boot is planted
+
+const bg = new Uint8Array(N_PIX);
+const fb = new Uint8Array(N_PIX);
+const sp = new Uint8Array(N_PIX);
+const tg = new Uint8Array(N_PIX); // 1 = axe pixel, 0 = body pixel
+
+const off = document.createElement('canvas');
+off.width = W; off.height = H;
+const octx = off.getContext('2d');
+const img = octx.createImageData(W, H);
+const out32 = new Uint32Array(img.data.buffer);
+
+const pal32 = new Uint32Array(PAL.length);
+const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+for (let i = 0; i < PAL.length; i++) {
+  const v = parseInt(PAL[i].slice(1), 16);
+  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+  pal32[i] = littleEndian
+    ? ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | 255) >>> 0;
+}
+
+const screen = document.getElementById('screen');
+const sctx = screen.getContext('2d', { alpha: false });
+let scale = 1, offX = 0, offY = 0, dirty = true;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.floor(window.innerWidth * dpr);
+  const ch = Math.floor(window.innerHeight * dpr);
+  screen.width = cw;
+  screen.height = ch;
+  screen.style.width = (cw / dpr) + 'px';
+  screen.style.height = (ch / dpr) + 'px';
+  scale = Math.max(1, Math.floor(Math.min(cw / W, ch / H)));
+  offX = (cw - W * scale) >> 1;
+  offY = (ch - H * scale) >> 1;
+  sctx.imageSmoothingEnabled = false;
+  dirty = true;
+}
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------
+// Integer pixel primitives
+// ---------------------------------------------------------------------------
+function fput(x, y, c) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  fb[y * W + x] = c;
+}
+
+let curTag = 0;
+function sput(x, y, c) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = y * W + x;
+  sp[i] = c; tg[i] = curTag;
+}
+function srun(x0, x1, y, c) {
+  if (y < 0 || y >= H) return;
+  if (x0 < 0) x0 = 0;
+  if (x1 > W - 1) x1 = W - 1;
+  const row = y * W;
+  for (let x = x0; x <= x1; x++) { sp[row + x] = c; tg[row + x] = curTag; }
+}
+
+// Pixel maps: '.' is transparent, 'E' takes the caller's eye colour.
+const CH = new Uint8Array(128).fill(EMPTY);
+CH[83] = SKIN;      // S
+CH[75] = SKIN_D;    // K
+CH[76] = SKIN_L;    // L
+CH[73] = IRON_D;    // I
+CH[77] = IRON;      // M
+CH[72] = IRON_L;    // H
+CH[66] = BONE;      // B
+CH[98] = BONE_SH;   // b
+CH[79] = OUTLINE;   // O
+const CH_E = 69;
+
+function drawMap(map, x, y, eye) {
+  for (let r = 0; r < map.length; r++) {
+    const row = map[r];
+    for (let c = 0; c < row.length; c++) {
+      const code = row.charCodeAt(c);
+      const v = code === CH_E ? eye : CH[code];
+      if (v !== EMPTY) sput(x + c, y + r, v);
+    }
+  }
+}
+
+const HEAD = [
+  '...KSSS...',
+  '..KSSSSLL.',
+  '.KSSSSSSSL',
+  'KSSSSLLLLL',
+  'KSSSKKKKKK',
+  'KSSSSSKEKS',
+  '.SSSSSSSLL',
+  '.SSSSSSBSB',
+  '.KSSSSSBOB',
+  '..KSSSSSSS',
+  '...KKKKKK.',
+];
+const SKULL = [
+  '.BBB.',
+  'BOBOB',
+  'BBBBB',
+  '.bBb.',
+  '.b.b.',
+];
+const FIST = [
+  '.MM.',
+  'MHMI',
+  'IMMI',
+  '.II.',
+];
+
+// ---------------------------------------------------------------------------
+// RNG: rndi() returns a Smi so no heap number is produced per call.
+// ---------------------------------------------------------------------------
+const SEED = new Int32Array([0x2545f491]);
+const RS = 1 / 1073741824;
+function rndi() {
+  let s = SEED[0];
+  s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+  SEED[0] = s;
+  return s >>> 2;
+}
+
+// ---------------------------------------------------------------------------
+// Background (built once)
+// ---------------------------------------------------------------------------
+const BAYER = new Uint8Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]);
+const MOON_X = 104, MOON_Y = 15, MOON_R = 5;
+
+function hillH(x) {
+  return 4 + Math.round(2.5 * Math.sin(x * 0.06 + 0.8) + 1.5 * Math.sin(x * 0.17 + 2.1));
+}
+
+function bset(x, y, c) { if (x >= 0 && y >= 0 && x < W && y < H) bg[y * W + x] = c; }
+
+function buildBackground() {
+  for (let y = 0; y < FLOOR_Y; y++) {
+    const f = Math.pow(y / FLOOR_Y, 1.1) * 3.5;
+    const band = Math.floor(f);
+    const t = Math.max(0, (f - band - 0.6) / 0.4);
+    for (let x = 0; x < W; x++) {
+      const thr = (BAYER[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
+      let c = band + (t > thr ? 1 : 0);
+      if (c > SKY3) c = SKY3;
+      bg[y * W + x] = c;
+    }
+  }
+
+  for (let y = MOON_Y - 11; y <= MOON_Y + 11; y++) {
+    for (let x = MOON_X - 11; x <= MOON_X + 11; x++) {
+      const dx = x - MOON_X, dy = y - MOON_Y, d2 = dx * dx + dy * dy;
+      if (d2 <= MOON_R * MOON_R + MOON_R) {
+        const sx = x - (MOON_X - 2), sy = y - (MOON_Y - 2);
+        bset(x, y, sx * sx + sy * sy > (MOON_R + 1) * (MOON_R + 1) ? MOON_SH : MOON);
+      } else if (d2 < 8 * 8) {
+        if (((x + y) & 1) === 0) bset(x, y, SKY2);
+      } else if (d2 < 11 * 11) {
+        if (((x + y) & 1) === 0 && (y & 1) === 0 && bg[y * W + x] < SKY1) bset(x, y, SKY1);
+      }
+    }
+  }
+  bset(MOON_X - 1, MOON_Y - 1, MOON_SH);
+  bset(MOON_X + 1, MOON_Y + 2, MOON_SH);
+  bset(MOON_X - 2, MOON_Y + 1, MOON_SH);
+
+  for (let x = 0; x < W; x++) {
+    const h = hillH(x);
+    for (let y = FLOOR_Y - h; y < FLOOR_Y; y++) bg[y * W + x] = SKY1;
+  }
+
+  // Abandoned spears and a torn banner on the far ridge.
+  const SPEARS = [6, 10, 1, 13, 7, -1, 88, 12, 0, 95, 8, 1, 113, 10, -1, 121, 6, 1];
+  for (let s = 0; s < SPEARS.length; s += 3) {
+    const x0 = SPEARS[s], len = SPEARS[s + 1], sl = SPEARS[s + 2];
+    const base = FLOOR_Y - hillH(x0);
+    for (let k = 0; k < len; k++) bset(x0 + ((sl * k / 4) | 0), base - k, SKY1);
+    bset(x0 + ((sl * len / 4) | 0), base - len, SKY2);
+  }
+  const bx = 88, by = FLOOR_Y - hillH(88) - 11;
+  for (let r = 0; r < 4; r++) for (let c = 1; c <= 5 - (r & 1); c++) bset(bx + c, by + r, SKY1);
+  bset(bx + 5, by + 3, SKY2);
+
+  // Floor: lit top edge, then irregular flagstones fading into shadow.
+  for (let x = 0; x < W; x++) {
+    bg[FLOOR_Y * W + x] = STONE_L;
+    bg[(FLOOR_Y + 1) * W + x] = STONE_M;
+  }
+  for (let band = 0; band < 3; band++) {
+    const y0 = FLOOR_Y + 2 + band * 4;
+    let next = -((rndi() * RS * 10) | 0);
+    for (let x = 0; x < W; x++) {
+      const joint = x === next;
+      if (joint) next = x + 11 + ((rndi() * RS * 9) | 0);
+      for (let r = 0; r < 4; r++) {
+        const y = y0 + r;
+        if (y >= H) continue;
+        const deep = band === 2 || (band === 1 && ((x + y) & 1) === 0);
+        let c = deep ? STONE_D : STONE_M;
+        if (r === 0) c = deep ? OUTLINE : STONE_D;
+        else if (joint) c = deep ? OUTLINE : STONE_D;
+        bg[y * W + x] = c;
+      }
+      if (joint && band === 0 && x + 1 < W) bg[(y0 + 1) * W + x + 1] = STONE_L;
+    }
+  }
+  for (let n = 0; n < 7; n++) {
+    let x = (rndi() * RS * W) | 0, y = FLOOR_Y + 1 + ((rndi() * RS * 3) | 0);
+    const dir = rndi() & 1 ? 1 : -1, len = 3 + ((rndi() * RS * 4) | 0);
+    for (let k = 0; k < len; k++) {
+      bset(x, y, y > FLOOR_Y + 5 ? OUTLINE : STONE_D);
+      x += dir;
+      if (rndi() * RS < 0.4) y++;
+    }
+  }
+}
+
+const N_STARS = 28;
+const starX = new Uint8Array(N_STARS), starY = new Uint8Array(N_STARS);
+const starP = new Uint16Array(N_STARS), starPh = new Uint16Array(N_STARS);
+
+function buildStars() {
+  for (let s = 0; s < N_STARS; s++) {
+    let x, y;
+    for (;;) {
+      x = 2 + ((rndi() * RS * (W - 4)) | 0);
+      y = 2 + ((rndi() * RS * 52) | 0);
+      const dx = x - MOON_X, dy = y - MOON_Y;
+      if (dx * dx + dy * dy > 13 * 13 && y < FLOOR_Y - hillH(x) - 14) break;
+    }
+    starX[s] = x; starY[s] = y;
+    starP[s] = 60 + ((rndi() * RS * 110) | 0);
+    starPh[s] = (rndi() * RS * 300) | 0;
+  }
+}
+
+function drawStars() {
+  const qt = tick - (tick % 5);
+  for (let s = 0; s < N_STARS; s++) {
+    const v = ((qt + starPh[s]) % starP[s]) / starP[s];
+    fb[starY[s] * W + starX[s]] = v < 0.1 ? MOON : v < 0.4 ? STONE_L : STAR_DIM;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pose parameters, keyframes, rig
+// ---------------------------------------------------------------------------
+const P = new Float64Array(16);
+const HX = 0, HY = 1, LEAN = 2, SR = 3, ELB = 4, TILT = 5, AXE = 6, CLOTHP = 7, LIFT = 8;
+const FFX = 9, FFY = 10, FBX = 11, FBY = 12, SHRUG = 13, RUNE = 14, WARM = 15;
+
+// Upper-body keys: lean, shoulder rotation, elbow bend, head tilt, axe angle.
+const K_READY  = new Float64Array([ 0.15,  0.85, 0.55,  0, -0.95]);
+const K_CROUCH = new Float64Array([-0.30, -1.80, 0.35, -1, -2.50]);
+const K_AIR    = new Float64Array([ 0.00, -1.65, 0.20,  0, -2.55]);
+const K_WIND   = new Float64Array([-0.12, -1.95, 0.25, -1, -2.90]);
+const K_IMPACT = new Float64Array([ 0.70, -0.05, 0.10,  1,  0.45]);
+const K_PULL   = new Float64Array([ 0.30,  0.55, 0.50,  0, -1.35]);
+
+function lerpUpper(A, B, e) {
+  for (let i = 0; i < 5; i++) P[LEAN + i] = A[i] + (B[i] - A[i]) * e;
+}
+
+function clamp01(t) { return t < 0 ? 0 : t > 1 ? 1 : t; }
+function smooth(t) { t = clamp01(t); return t * t * (3 - 2 * t); }
+function sineInOut(t) { t = clamp01(t); return 0.5 - 0.5 * Math.cos(Math.PI * t); }
+function cubicInOut(t) { t = clamp01(t); return t < 0.5 ? 4 * t * t * t : 1 - 4 * (1 - t) * (1 - t) * (1 - t); }
+function backOut(t) { t = clamp01(t); const u = t - 1; return 1 + 2.4 * u * u * u + 1.4 * u * u; }
+
+const HOME_X = 34, CROUCH_X = 32, LAND_X = 64;
+const STAND_Y = 65, CROUCH_Y = 71, LAND_Y = 72;
+const T_AIR = 40, JUMP_H = 16;
+const RET_F = new Float64Array([72, 61 + 1 / 3, 50 + 2 / 3, 40]);
+const RET_B = new Float64Array([56, 46 + 2 / 3, 37 + 1 / 3, 28]);
+
+const IDLE = 0, CHARGE = 1, LEAP = 2, SLAM = 3, RECOVER = 4, RETURN = 5;
+const DUR = new Uint16Array([120, 96, 30, 15, 110, 120]);
+const SAMPLE = 5; // 60hz / 5 = 12 fps pose sampling
+
+let state = IDLE, st = 0, tick = 0, freeze = 0;
+
+function setFeet(fx, fy, bx, by) { P[FFX] = fx; P[FFY] = fy; P[FBX] = bx; P[FBY] = by; }
+
+function airborne(a) {
+  const j = a / T_AIR;
+  P[HX] = CROUCH_X + (LAND_X - CROUCH_X) * j;
+  P[HY] = 66 + (LAND_Y - 66) * j - 4 * JUMP_H * j * (1 - j);
+  const e1 = smooth(j / 0.25), e2 = smooth((j - 0.6) / 0.4);
+  const tfx = P[HX] + 5, tfy = P[HY] + 8, tbx = P[HX] - 3, tby = P[HY] + 7;
+  let fx = 43 + (tfx - 43) * e1, fy = ANKLE_Y + (tfy - ANKLE_Y) * e1;
+  let bx = 25 + (tbx - 25) * e1, by = ANKLE_Y + (tby - ANKLE_Y) * e1;
+  fx += (72 - fx) * e2; fy += (ANKLE_Y - fy) * e2;
+  bx += (56 - bx) * e2; by += (ANKLE_Y - by) * e2;
+  setFeet(fx, fy, bx, by);
+  P[LIFT] = 0.55 * (1 - e2);
+}
+
+function computePose() {
+  const q = st - (st % SAMPLE);
+  P[SHRUG] = 0; P[LIFT] = 0; P[CLOTHP] = 0;
+  if (state === IDLE) {
+    const breath = ((q / 40) | 0) & 1;
+    lerpUpper(K_READY, K_READY, 0);
+    P[AXE] += breath * 0.03;
+    P[HX] = HOME_X; P[HY] = STAND_Y;
+    P[SHRUG] = breath;
+    setFeet(40, ANKLE_Y, 28, ANKLE_Y);
+    P[RUNE] = (tick % 150) < 15 ? 0.35 : 0.1;
+    P[WARM] = 0.15;
+  } else if (state === CHARGE) {
+    const e = sineInOut(q / 55);
+    lerpUpper(K_READY, K_CROUCH, e);
+    P[HX] = HOME_X + (CROUCH_X - HOME_X) * e;
+    P[HY] = STAND_Y + (CROUCH_Y - STAND_Y) * e;
+    const k1 = clamp01(q / 20), k2 = clamp01((q - 10) / 20);
+    setFeet(40 + 3 * smooth(k1), ANKLE_Y - 2 * Math.sin(Math.PI * k1),
+            28 - 3 * smooth(k2), ANKLE_Y - 2 * Math.sin(Math.PI * k2));
+    if (q > 55) {
+      const odd = (q / SAMPLE) & 1;
+      P[AXE] += odd ? 0.05 : -0.03;
+      P[TILT] = odd ? -1 : 0;
+    }
+    P[CLOTHP] = 0.8 * e;
+    P[RUNE] = 0.1 + 0.9 * q / DUR[CHARGE];
+    P[WARM] = 0.2 + 0.7 * q / DUR[CHARGE];
+  } else if (state === LEAP) {
+    if (q < SAMPLE) {
+      lerpUpper(K_CROUCH, K_AIR, 0.3);
+      P[HX] = CROUCH_X + 0.5; P[HY] = 67;
+      setFeet(43, ANKLE_Y, 25, ANKLE_Y);
+    } else {
+      airborne(q - SAMPLE);
+      lerpUpper(K_CROUCH, K_AIR, smooth((q - SAMPLE) / T_AIR / 0.35));
+    }
+    P[CLOTHP] = -3.5;
+    P[RUNE] = 1; P[WARM] = 0.8;
+  } else if (state === SLAM) {
+    airborne(DUR[LEAP] - SAMPLE + q);
+    const t = q / DUR[SLAM];
+    lerpUpper(K_WIND, K_IMPACT, t * t);
+    P[CLOTHP] = -2.5;
+    P[RUNE] = 1; P[WARM] = 1;
+  } else if (state === RECOVER) {
+    P[HX] = LAND_X;
+    setFeet(72, ANKLE_Y, 56, ANKLE_Y);
+    if (q < 30) {
+      lerpUpper(K_IMPACT, K_IMPACT, 0);
+      P[HY] = LAND_Y;
+      if (q >= 15) {
+        const odd = (q / SAMPLE) & 1;
+        P[AXE] += odd ? 0.05 : -0.02;
+        P[LEAN] += odd ? -0.05 : 0;
+      }
+    } else if (q < 45) {
+      const e = backOut((q - 30) / 15);
+      lerpUpper(K_IMPACT, K_PULL, e);
+      P[HY] = LAND_Y - 2 * e;
+    } else {
+      const e = cubicInOut((q - 45) / 65);
+      lerpUpper(K_PULL, K_READY, e);
+      P[HY] = LAND_Y - 2 + (STAND_Y - LAND_Y + 2) * e;
+    }
+    P[RUNE] = Math.max(0.1, 1 - q / 80);
+    P[WARM] = Math.max(0.15, 1 - q / 60);
+  } else {
+    const k = (q / 20) | 0, s = (q % 20) / 20, e = smooth(s);
+    const nf = (k + 1) >> 1, nb = k >> 1;
+    const lift = ANKLE_Y - 3 * Math.sin(Math.PI * s);
+    let fx = RET_F[nf], fy = ANKLE_Y, bx = RET_B[nb], by = ANKLE_Y;
+    if ((k & 1) === 0) { fx = RET_F[nf] + (RET_F[nf + 1] - RET_F[nf]) * e; fy = lift; }
+    else { bx = RET_B[nb] + (RET_B[nb + 1] - RET_B[nb]) * e; by = lift; }
+    setFeet(fx, fy, bx, by);
+    lerpUpper(K_READY, K_READY, 0);
+    P[LEAN] += 0.05 * Math.sin(Math.PI * s);
+    P[HX] = (fx + bx) * 0.5;
+    P[HY] = STAND_Y - Math.sin(Math.PI * s);
+    P[CLOTHP] = 1;
+    P[RUNE] = 0.1; P[WARM] = 0.15;
+  }
+}
+
+// Rig joints, rounded to the pixel grid.
+let _j = 0;
+const J_HX = _j++, J_HY = _j++, J_NX = _j++, J_NY = _j++, J_PAX = _j++, J_PAY = _j++;
+const J_SFX = _j++, J_SFY = _j++, J_SBX = _j++, J_SBY = _j++;
+const J_GX = _j++, J_GY = _j++, J_LX = _j++, J_LY = _j++;
+const J_EFX = _j++, J_EFY = _j++, J_EBX = _j++, J_EBY = _j++;
+const J_HFX = _j++, J_HFY = _j++, J_HBX = _j++, J_HBY = _j++;
+const J_KFX = _j++, J_KFY = _j++, J_KBX = _j++, J_KBY = _j++;
+const J_AFX = _j++, J_AFY = _j++, J_ABX = _j++, J_ABY = _j++;
+const J_HDX = _j++, J_HDY = _j++, J_BCX = _j++, J_BCY = _j++;
+const J_CFX = _j++, J_CFY = _j++, J_CBX = _j++, J_CBY = _j++;
+const J_SKX = _j++, J_SKY = _j++, J_IPX = _j++, J_PFX = _j++, J_PFY = _j++;
+const J = new Int32Array(_j);
+const Q = new Float64Array(8);
+
+function ri(v) { return Math.round(v) | 0; }
+
+// Two-bone IK: Q[0..3] = root, target. Result in Q[4..5]. mode 0 bends knees forward, 1 bends elbows down.
+function ik(l1, l2, mode) {
+  const jx = Q[0], jy = Q[1];
+  let dx = Q[2] - jx, dy = Q[3] - jy;
+  let d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 0.01) { dx = 0; dy = 1; d = 1; }
+  const ux = dx / d, uy = dy / d;
+  let dc = d;
+  if (dc > l1 + l2 - 0.05) dc = l1 + l2 - 0.05;
+  if (dc < 2) dc = 2;
+  const a = (l1 * l1 - l2 * l2 + dc * dc) / (2 * dc);
+  const h2 = l1 * l1 - a * a, h = h2 > 0 ? Math.sqrt(h2) : 0;
+  let px = -uy, py = ux;
+  const score = mode === 0 ? px : py + 0.35 * px;
+  if (score < 0) { px = -px; py = -py; }
+  Q[4] = jx + ux * a + px * h;
+  Q[5] = jy + uy * a + py * h;
+}
+
+function computeRig() {
+  const L = P[LEAN];
+  const tx = Math.sin(L), ty = -Math.cos(L), fx = Math.cos(L), fy = Math.sin(L);
+  const hx = P[HX], hy = P[HY];
+  const nl = 12 + P[SHRUG];
+  const nx = hx + tx * nl, ny = hy + ty * nl;
+  const sfx = nx + fx - tx * 3, sfy = ny + fy - ty * 3;
+  const sbx = nx - fx * 4 - tx, sby = ny - fy * 4 - ty;
+  const reach = 14 - 7 * P[ELB];
+  const gx = sfx + Math.cos(P[SR]) * reach, gy = sfy + Math.sin(P[SR]) * reach;
+  const ax = Math.cos(P[AXE]), ay = Math.sin(P[AXE]);
+
+  J[J_HX] = ri(hx); J[J_HY] = ri(hy);
+  J[J_NX] = ri(nx); J[J_NY] = ri(ny);
+  J[J_PAX] = ri(hx - tx * 1.5); J[J_PAY] = ri(hy - ty * 1.5);
+  J[J_SFX] = ri(sfx); J[J_SFY] = ri(sfy);
+  J[J_SBX] = ri(sbx); J[J_SBY] = ri(sby);
+  J[J_GX] = ri(gx); J[J_GY] = ri(gy);
+  J[J_LX] = ri(gx - ax * 6); J[J_LY] = ri(gy - ay * 6);
+  J[J_HFX] = ri(hx + fx * 2); J[J_HFY] = ri(hy + fy * 2);
+  J[J_HBX] = ri(hx - fx * 2); J[J_HBY] = ri(hy - fy * 2);
+  J[J_AFX] = ri(P[FFX]); J[J_AFY] = ri(P[FFY]);
+  J[J_ABX] = ri(P[FBX]); J[J_ABY] = ri(P[FBY]);
+  const tilt = ri(P[TILT]);
+  J[J_HDX] = ri(nx + fx * 6 + tx) + tilt; J[J_HDY] = ri(ny + fy * 6 + ty) + tilt;
+  J[J_PFX] = ri(nx - fx * 0.5 - tx * 1.5); J[J_PFY] = ri(ny - fy * 0.5 - ty * 1.5);
+  J[J_BCX] = ri(gx + ax * 20 - ay * 7); J[J_BCY] = ri(gy + ay * 20 + ax * 7);
+  J[J_IPX] = ri(gx + ax * 20 - ay * 13);
+  J[J_CFX] = ri(hx + fx * 4 + tx * 0.5); J[J_CFY] = ri(hy + fy * 4 + ty * 0.5);
+  J[J_CBX] = ri(hx - fx * 5 + tx * 0.5); J[J_CBY] = ri(hy - fy * 5 + ty * 0.5);
+  J[J_SKX] = ri(hx + fx * 4 + tx * 2.5); J[J_SKY] = ri(hy + fy * 4 + ty * 2.5);
+
+  Q[0] = J[J_HFX]; Q[1] = J[J_HFY]; Q[2] = J[J_AFX]; Q[3] = J[J_AFY]; ik(8, 8, 0);
+  J[J_KFX] = ri(Q[4]); J[J_KFY] = ri(Q[5]);
+  Q[0] = J[J_HBX]; Q[1] = J[J_HBY]; Q[2] = J[J_ABX]; Q[3] = J[J_ABY]; ik(8, 8, 0);
+  J[J_KBX] = ri(Q[4]); J[J_KBY] = ri(Q[5]);
+  Q[0] = J[J_SFX]; Q[1] = J[J_SFY]; Q[2] = J[J_GX]; Q[3] = J[J_GY]; ik(7, 7, 1);
+  J[J_EFX] = ri(Q[4]); J[J_EFY] = ri(Q[5]);
+  Q[0] = J[J_SBX]; Q[1] = J[J_SBY]; Q[2] = J[J_LX]; Q[3] = J[J_LY]; ik(7, 7, 1);
+  J[J_EBX] = ri(Q[4]); J[J_EBY] = ri(Q[5]);
+}
+
+// ---------------------------------------------------------------------------
+// Secondary motion: cloth and armour springs (overshoot on settle)
+// ---------------------------------------------------------------------------
+const F = new Float64Array(10);
+const F_CLOTH = 0, F_CLOTHV = 1, F_ARM = 2, F_ARMV = 3, F_CLOTHDRAW = 4;
+const F_LAST = 5, F_ACC = 6, F_PREVA = 7;
+let armorOff = 0, prevGX = 0, prevGY = 0;
+
+function updateSprings() {
+  F[F_CLOTHV] = (F[F_CLOTHV] + (P[CLOTHP] - F[F_CLOTH]) * 0.10) * 0.84;
+  F[F_CLOTH] += F[F_CLOTHV];
+  F[F_ARMV] = (F[F_ARMV] + (P[HY] - F[F_ARM]) * 0.16) * 0.78;
+  F[F_ARM] += F[F_ARMV];
+}
+
+function latchSecondary() {
+  F[F_CLOTHDRAW] = F[F_CLOTH];
+  let o = ri((F[F_ARM] - P[HY]) * 0.6);
+  armorOff = o < -2 ? -2 : o > 2 ? 2 : o;
+}
+
+// ---------------------------------------------------------------------------
+// Body part rasterizers (per-pixel tests in part-local coordinates)
+// ---------------------------------------------------------------------------
+const K_UARM = 0, K_FARM = 1, K_THIGH = 2, K_SHIN = 3;
+const LW0 = new Float64Array([3.2, 2.8, 3.5, 2.9]);
+const LW1 = new Float64Array([2.7, 2.4, 2.9, 2.5]);
+
+function skinShade(s, dark) {
+  if (s > 0.35) return dark ? SKIN : SKIN_L;
+  if (s < -0.25) return SKIN_D;
+  return dark ? SKIN_D : SKIN;
+}
+
+function limb(ax, ay, bx, by, kind, dark) {
+  const dx = bx - ax, dy = by - ay;
+  let len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 0.5) len = 0.5;
+  const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+  const w0 = LW0[kind], w1 = LW1[kind];
+  const ld = (nx - ny) * 0.7071;
+  const x0 = Math.min(ax, bx) - 4, x1 = Math.max(ax, bx) + 4;
+  const y0 = Math.min(ay, by) - 4, y1 = Math.max(ay, by) + 4;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const rx = px - ax, ry = py - ay;
+      const u = rx * ux + ry * uy, v = rx * nx + ry * ny;
+      let t, hw;
+      if (u < 0) { if (u * u + v * v > w0 * w0) continue; t = 0; hw = w0; }
+      else if (u > len) { const e = u - len; if (e * e + v * v > w1 * w1) continue; t = 1; hw = w1; }
+      else { t = u / len; hw = w0 + (w1 - w0) * t; if (v > hw || v < -hw) continue; }
+      const s = (v / hw) * ld;
+      let c;
+      if (kind === K_UARM) c = skinShade(s, dark);
+      else if (kind === K_FARM) {
+        if (t < 0.42) c = skinShade(s, dark);
+        else if (t < 0.54) c = dark ? IRON_D : (s > 0.3 ? IRON_L : IRON);
+        else c = s > (dark ? 0.45 : 0.15) ? IRON : IRON_D;
+      } else if (kind === K_THIGH) {
+        if (t > 0.8) c = !dark && s > 0.2 ? IRON : IRON_D;
+        else c = s > (dark ? 0.6 : 0.3) ? LEATH : LEATH_D;
+      } else {
+        c = s > (dark ? 0.45 : 0.1) ? IRON : IRON_D;
+        if (!dark && s > 0.78 && t > 0.15) c = IRON_L;
+      }
+      sput(px, py, c);
+    }
+  }
+}
+
+function torso(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+  const x0 = Math.min(ax, bx) - 10, x1 = Math.max(ax, bx) + 10;
+  const y0 = Math.min(ay, by) - 10, y1 = Math.max(ay, by) + 10;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const rx = px - ax, ry = py - ay;
+      const u = rx * ux + ry * uy, v = rx * nx + ry * ny;
+      if (u < -1.5 || u > len + 2.5) continue;
+      const t = clamp01(u / len);
+      let fw = 5.5 + 2.6 * Math.sin(Math.PI * t), bw = 5.5 + 3 * t;
+      if (u < 0) { fw += u * 1.5; bw += u * 1.5; }
+      else if (u > len) { const e = u - len; fw -= e * 1.8; bw -= e * 1.1; }
+      if (v > fw || v < -bw) continue;
+      let c;
+      if (t < 0.17) c = t > 0.12 ? LEATH : LEATH_D;
+      else if (v > -1.2) {
+        const pb = (t - 0.17) / 0.21, band = pb | 0, tb = pb - band;
+        if (tb > 0.78 && band < 3) c = OUTLINE;
+        else c = v > 1.8 ? IRON : IRON_D;
+        if (tb < 0.3 && v > fw - 1.3) c = IRON_L;
+      } else {
+        c = v < -bw + 1.6 ? SKIN_D : SKIN;
+        if (t > 0.5 && t < 0.62) c = LEATH_D;
+      }
+      sput(px, py, c);
+    }
+  }
+}
+
+function boot(ax, ay, dark) {
+  srun(ax - 2, ax + 2, ay, dark ? IRON_D : IRON);
+  srun(ax - 3, ax + 3, ay + 1, IRON_D);
+  srun(ax - 3, ax + 4, ay + 2, IRON_D);
+  srun(ax - 3, ax + 4, ay + 3, OUTLINE);
+  if (!dark) { sput(ax + 2, ay + 1, IRON); sput(ax + 4, ay + 2, IRON_L); sput(ax + 5, ay + 2, IRON); }
+}
+
+const PF_SPIKE_X = new Int8Array([-6, -3, 0]);
+const PF_SPIKE_H = new Int8Array([7, 9, 6]);
+
+function pauldronF(cx, cy) {
+  for (let dy = -6; dy <= 1; dy++) {
+    for (let dx = -8; dx <= 8; dx++) {
+      const ex = dx / 7.6, ey = dy / 5.4;
+      if (ex * ex + ey * ey > 1) continue;
+      sput(cx + dx, cy + dy, dy === 1 ? OUTLINE : (dx > -1 && dy < -1) ? IRON : IRON_D);
+    }
+  }
+  srun(cx - 7, cx + 6, cy + 2, IRON_D); srun(cx, cx + 6, cy + 2, IRON);
+  srun(cx - 6, cx + 5, cy + 3, OUTLINE);
+  srun(cx - 6, cx + 4, cy + 4, IRON_D); srun(cx, cx + 4, cy + 4, IRON);
+  sput(cx - 4, cy - 1, BONE); sput(cx + 1, cy - 2, BONE); sput(cx + 5, cy - 1, BONE);
+  for (let s = 0; s < 3; s++) {
+    const h = PF_SPIKE_H[s];
+    for (let k = 0; k < h; k++) {
+      const x = cx + PF_SPIKE_X[s] - ((k * 2 / 3) | 0), y = cy - 5 - k;
+      if (k >= h - 2) { sput(x, y, k === h - 1 ? BONE : BONE_SH); continue; }
+      sput(x, y, IRON_D);
+      if (k < h - 3) sput(x + 1, y, IRON);
+    }
+  }
+}
+
+function pauldronB(cx, cy) {
+  for (let dy = -4; dy <= 1; dy++) {
+    for (let dx = -6; dx <= 6; dx++) {
+      const ex = dx / 5, ey = dy / 4;
+      if (ex * ex + ey * ey > 1) continue;
+      sput(cx + dx, cy + dy, dy === 1 ? OUTLINE : (dx > 1 && dy < -1) ? IRON : IRON_D);
+    }
+  }
+  srun(cx - 4, cx + 3, cy + 2, IRON_D);
+  for (let k = 0; k < 10; k++) {
+    const x = cx - 1 - ((k * k / 14) | 0), y = cy - 3 - k;
+    if (k < 5) { sput(x, y, BONE_SH); sput(x + 1, y, BONE); }
+    else sput(x, y, k === 9 ? BONE : BONE_SH);
+  }
+}
+
+const CL_F = new Int8Array([9, 11, 8, 10, 7]);
+const CL_B = new Int8Array([7, 9, 10, 8, 6]);
+
+function cloth(ax, ay, front) {
+  const sway = F[F_CLOTHDRAW], lift = P[LIFT];
+  const lens = front ? CL_F : CL_B;
+  for (let c = 0; c < 5; c++) {
+    const len = lens[c];
+    for (let r = 0; r < len; r++) {
+      if (r === len - 2 && (c & 1)) continue;
+      const x = ax - 2 + c + ri(sway * r / 7);
+      const y = ay + ri(r * (1 - lift));
+      if (y > FLOOR_Y - 1) break;
+      let col;
+      if (front) col = (r === len - 1 || c === 0 || c === 3) ? CLOTH_D : CLOTH;
+      else col = c === 2 && r < len - 1 ? CLOTH : CLOTH_D;
+      sput(x, y, col);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Axe: rasterized per pixel at its current angle in handle-local coordinates.
+// u runs along the handle from the lead hand (+u toward the head), v across it
+// (+v is the cutting side). mode 0 draws the full weapon into the sprite layer,
+// mode 1 stamps a solid blade silhouette into the framebuffer for the slash trail.
+// ---------------------------------------------------------------------------
+const RUNES = [
+  'x.x.x..x.',
+  '.x..xx.x.',
+  'x.xx...xx',
+  '.x..x.x..',
+];
+const RUNE_M = new Uint8Array(36);
+for (let r = 0; r < 4; r++) for (let c = 0; c < 9; c++) RUNE_M[r * 9 + c] = RUNES[r][c] === 'x' ? 1 : 0;
+
+const TR_N = 8;
+const trX = new Int16Array(TR_N), trY = new Int16Array(TR_N);
+const trA = new Float64Array(TR_N), trB = new Int32Array(TR_N).fill(-9999);
+let trHead = 0;
+
+function axe(mode, col, gx, gy, trail) {
+  const ang = trail < 0 ? P[AXE] : trA[trail];
+  const ax = Math.cos(ang), ay = Math.sin(ang), nx = -ay, ny = ax;
+  const yMax = mode === 0 ? FLOOR_Y + 1 : FLOOR_Y;
+  const x0 = gx - 32 < 0 ? 0 : gx - 32, x1 = gx + 32 > W - 1 ? W - 1 : gx + 32;
+  const y0 = gy - 32 < 0 ? 0 : gy - 32, y1 = gy + 32 > yMax ? yMax : gy + 32;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const rx = px - gx, ry = py - gy;
+      const u = rx * ax + ry * ay, v = rx * nx + ry * ny;
+      if (u < -12 || u > 30) continue;
+      const up = u - 20;
+      let c = EMPTY, blade = false;
+      if (v >= 1.5 && up > -12 && up < 12 && v <= 15) {
+        const ua = up < 0 ? -up * 0.85 : up;
+        const edge = 14 - ua * ua / 20;
+        if (v <= edge && ua <= 2.6 + (v - 2) * (v - 2) / 9) {
+          blade = v > edge - 5;
+          if (v > edge - 0.9) c = MOON;
+          else if (v > edge - 1.9) c = IRON_L;
+          else {
+            c = up > 0 ? IRON : IRON_D;
+            const ru = ri(up) + 4, rv = ri(v) - 5;
+            if (ru >= 0 && ru < 9 && rv >= 0 && rv < 4 && RUNE_M[rv * 9 + ru]) c = col;
+          }
+        }
+      } else if (v <= -1.5 && up > -3.5 && up < 3.5 && v >= -9.5) {
+        const d = -v - 1.5, hws = 3.2 - d * 0.42;
+        if (up > -hws && up < hws && !(d > 2.5 && d < 4 && up > 0.3)) {
+          c = up > hws - 1 ? IRON_L : IRON_D;
+        }
+      }
+      if (c === EMPTY) {
+        const av = v < 0 ? -v : v;
+        if (u >= 14 && u <= 26 && av <= 2.3) {
+          c = v > 0.8 ? IRON : IRON_D;
+          if ((ri(u) === 16 || ri(u) === 24) && v > 0.5) c = IRON_L;
+        } else if (u > 26 && av <= (30 - u) * 0.55) c = u > 28 ? IRON_L : IRON;
+        else if (u < -9 && av <= 2) c = u < -11 ? OUTLINE : IRON_D;
+        else if (u < 14 && av <= 1.3) {
+          if (u > -8 && u < 3) c = ((Math.floor(u * 0.8 + v) & 1) === 0) ? LEATH : LEATH_D;
+          else c = v > 0.4 ? LEATH : LEATH_D;
+        }
+      }
+      if (c === EMPTY) continue;
+      if (mode === 0) sput(px, py, c);
+      else if (blade) fb[py * W + px] = col;
+    }
+  }
+}
+
+function addTrails(n) {
+  for (let s = 1; s <= n; s++) {
+    const e = s / (n + 1);
+    trX[trHead] = ri(prevGX + (J[J_GX] - prevGX) * e);
+    trY[trHead] = ri(prevGY + (J[J_GY] - prevGY) * e);
+    trA[trHead] = F[F_PREVA] + (P[AXE] - F[F_PREVA]) * e;
+    trB[trHead] = tick;
+    trHead = (trHead + 1) % TR_N;
+  }
+}
+
+function drawTrails() {
+  for (let i = 0; i < TR_N; i++) {
+    const age = tick - trB[i];
+    if (age < 0 || age >= 10) continue;
+    axe(1, age < 3 ? EM_Y : age < 6 ? EM_O : EM_R, trX[i], trY[i], i);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Orc assembly and lighting passes
+// ---------------------------------------------------------------------------
+function runeColor() {
+  let r = P[RUNE];
+  if (state === CHARGE && ((tick >> 1) & 1)) r -= 0.2;
+  return r < 0.25 ? EM_D : r < 0.5 ? EM_R : r < 0.8 ? EM_O : EM_Y;
+}
+
+function drawOrc() {
+  sp.fill(EMPTY);
+  tg.fill(0);
+  curTag = 0;
+  limb(J[J_SBX], J[J_SBY], J[J_EBX], J[J_EBY], K_UARM, 1);
+  limb(J[J_EBX], J[J_EBY], J[J_LX], J[J_LY], K_FARM, 1);
+  limb(J[J_HBX], J[J_HBY], J[J_KBX], J[J_KBY], K_THIGH, 1);
+  limb(J[J_KBX], J[J_KBY], J[J_ABX], J[J_ABY], K_SHIN, 1);
+  boot(J[J_ABX], J[J_ABY], 1);
+  cloth(J[J_CBX], J[J_CBY], 0);
+  pauldronB(J[J_SBX] - 1, J[J_SBY] - 1 + armorOff);
+  torso(J[J_PAX], J[J_PAY], J[J_NX], J[J_NY]);
+  limb(J[J_HFX], J[J_HFY], J[J_KFX], J[J_KFY], K_THIGH, 0);
+  limb(J[J_KFX], J[J_KFY], J[J_AFX], J[J_AFY], K_SHIN, 0);
+  boot(J[J_AFX], J[J_AFY], 0);
+  cloth(J[J_CFX], J[J_CFY], 1);
+  drawMap(SKULL, J[J_SKX] - 2, J[J_SKY] - 2, 0);
+  // Overhead, the haft passes behind the head and pauldron instead of across the face.
+  const axeBehind = J[J_GY] < J[J_NY] - 3;
+  if (axeBehind) { curTag = 1; axe(0, runeColor(), J[J_GX], J[J_GY], -1); curTag = 0; }
+  limb(J[J_SFX], J[J_SFY], J[J_EFX], J[J_EFY], K_UARM, 0);
+  limb(J[J_EFX], J[J_EFY], J[J_GX], J[J_GY], K_FARM, 0);
+  pauldronF(J[J_PFX], J[J_PFY] + armorOff);
+  const eye = (state === IDLE || state === RETURN) ? EM_R : (freeze > 0 ? EM_Y : EM_O);
+  const hx = J[J_HDX] - 5, hy = J[J_HDY] - 5;
+  drawMap(HEAD, hx, hy, eye);
+  const tail = ri(F[F_CLOTHDRAW] * 0.5);
+  sput(hx + 3, hy - 1, LEATH_D); sput(hx + 2, hy - 2, LEATH_D); sput(hx + 1, hy - 2, LEATH_D);
+  sput(hx, hy - 1 + (tail > 0 ? 1 : 0), LEATH_D); sput(hx - 1 + tail, hy, LEATH_D);
+  sput(hx - 2 + tail, hy + 1, LEATH_D); sput(hx - 2 + tail, hy + 2, CLOTH);
+  if (!axeBehind) { curTag = 1; axe(0, runeColor(), J[J_GX], J[J_GY], -1); curTag = 0; }
+  drawMap(FIST, J[J_LX] - 2, J[J_LY] - 2, 0);
+  drawMap(FIST, J[J_GX] - 2, J[J_GY] - 2, 0);
+}
+
+function outlinePass() {
+  for (let y = 1; y < H - 1; y++) {
+    const row = y * W;
+    for (let x = 1; x < W - 1; x++) {
+      const i = row + x;
+      if (sp[i] !== EMPTY) continue;
+      if (sp[i - 1] < SOLID_MAX || sp[i + 1] < SOLID_MAX ||
+          sp[i - W] < SOLID_MAX || sp[i + W] < SOLID_MAX) sp[i] = OUT_MARK;
+    }
+  }
+}
+
+// Moonlight catches top edges that face up-right, only on the upper body and axe.
+const MOONLIT = new Uint8Array(256).fill(EMPTY);
+MOONLIT[IRON_D] = IRON_L; MOONLIT[IRON] = IRON_L; MOONLIT[IRON_L] = MOON_SH;
+MOONLIT[BONE] = MOON; MOONLIT[BONE_SH] = BONE;
+MOONLIT[SKIN] = SKIN_L; MOONLIT[SKIN_D] = SKIN;
+MOONLIT[LEATH_D] = LEATH; MOONLIT[CLOTH_D] = CLOTH;
+
+function moonRim() {
+  const cut = J[J_HY] - 2;
+  for (let y = 1; y < H - 1; y++) {
+    const row = y * W;
+    for (let x = 1; x < W - 1; x++) {
+      const i = row + x, v = sp[i];
+      if (v >= SOLID_MAX) continue;
+      if (tg[i] === 0 && y >= cut) continue;
+      if (sp[i - W] < SOLID_MAX || sp[i - W + 1] < SOLID_MAX) continue;
+      const c = MOONLIT[v];
+      if (c !== EMPTY) sp[i] = c;
+    }
+  }
+}
+
+// Warm light reflected from the glowing blade onto nearby body edges.
+function warmRim() {
+  const w = P[WARM];
+  if (w < 0.05) return;
+  const R = 5 + 17 * w, R2 = R * R, near2 = R2 * 0.3;
+  const bx = J[J_BCX], by = J[J_BCY], ir = (R | 0) + 1;
+  for (let y = by - ir; y <= by + ir; y++) {
+    if (y < 1 || y >= H - 1) continue;
+    for (let x = bx - ir; x <= bx + ir; x++) {
+      if (x < 1 || x >= W - 1) continue;
+      const i = y * W + x;
+      if (sp[i] >= SOLID_MAX || tg[i] === 1) continue;
+      const dx = bx - x, dy = by - y, d2 = dx * dx + dy * dy;
+      if (d2 > R2) continue;
+      const adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+      const sx = adx * 2 >= ady ? (dx > 0 ? 1 : dx < 0 ? -1 : 0) : 0;
+      const sy = ady * 2 >= adx ? (dy > 0 ? 1 : dy < 0 ? -1 : 0) : 0;
+      if ((sx !== 0 && sp[i + sx] >= SOLID_MAX) || (sy !== 0 && sp[i + sy * W] >= SOLID_MAX)) {
+        sp[i] = (w > 0.7 && d2 < near2) ? EM_O : (w > 0.35 ? EM_R : EM_D);
+      }
+    }
+  }
+}
+
+function compositeSprite() {
+  for (let i = 0; i < N_PIX; i++) {
+    const v = sp[i];
+    if (v !== EMPTY) fb[i] = v === OUT_MARK ? OUTLINE : v;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Particles: preallocated pool, reused.
+// ---------------------------------------------------------------------------
+const NP = 400;
+const PK_ORBIT = 1, PK_EMBER = 2, PK_DUST = 3, PK_ROCK = 4;
+const pK = new Uint8Array(NP), pBounce = new Uint8Array(NP), pCol = new Uint8Array(NP), pSize = new Uint8Array(NP);
+const pX = new Float32Array(NP), pY = new Float32Array(NP);
+const pVX = new Float32Array(NP), pVY = new Float32Array(NP);
+const pLife = new Float32Array(NP), pMax = new Float32Array(NP);
+const pDrag = new Float32Array(NP), pGrav = new Float32Array(NP);
+const pAng = new Float32Array(NP), pRad = new Float32Array(NP), pAV = new Float32Array(NP), pShr = new Float32Array(NP);
+let pCursor = 0;
+
+function spawn(kind, x, y, life) {
+  for (let k = 0; k < NP; k++) {
+    const i = (pCursor + k) % NP;
+    if (pK[i] !== 0) continue;
+    pCursor = (i + 1) % NP;
+    pK[i] = kind; pX[i] = x; pY[i] = y; pVX[i] = 0; pVY[i] = 0;
+    pLife[i] = life; pMax[i] = life; pDrag[i] = 1; pGrav[i] = 0;
+    pBounce[i] = 0; pSize[i] = 1; pCol[i] = STONE_L;
+    return i;
+  }
+  return -1;
+}
+
+function spawnOrbit() {
+  const i = spawn(PK_ORBIT, J[J_BCX], J[J_BCY], 1);
+  if (i < 0) return;
+  pAng[i] = rndi() * RS * Math.PI * 2;
+  pRad[i] = 12 + rndi() * RS * 9;
+  pAV[i] = 0.1 + rndi() * RS * 0.07;
+  pShr[i] = 0.22 + rndi() * RS * 0.14;
+  pLife[i] = pMax[i] = Math.ceil(pRad[i] / pShr[i]);
+}
+
+function dustPuff(x, n, spread) {
+  for (let k = 0; k < n; k++) {
+    const i = spawn(PK_DUST, x, FLOOR_Y - 1, 14 + ((rndi() * RS * 14) | 0));
+    if (i < 0) return;
+    pVX[i] = (rndi() * RS - 0.5) * spread;
+    pVY[i] = -0.1 - rndi() * RS * 0.35;
+    pDrag[i] = 0.9; pGrav[i] = 0.01;
+  }
+}
+
+function updateParticles() {
+  const bx = J[J_BCX], by = J[J_BCY];
+  for (let i = 0; i < NP; i++) {
+    const k = pK[i];
+    if (k === 0) continue;
+    pLife[i] -= 1;
+    if (pLife[i] <= 0) { pK[i] = 0; continue; }
+    if (k === PK_ORBIT) {
+      pAng[i] += pAV[i];
+      pRad[i] -= pShr[i];
+      if (pRad[i] <= 0.8) { pK[i] = 0; continue; }
+      pX[i] = bx + Math.cos(pAng[i]) * pRad[i];
+      pY[i] = by + Math.sin(pAng[i]) * pRad[i] * 0.9;
+      continue;
+    }
+    pVX[i] *= pDrag[i];
+    pVY[i] = pVY[i] * pDrag[i] + pGrav[i];
+    pX[i] += pVX[i];
+    pY[i] += pVY[i];
+    if (pY[i] > FLOOR_Y - 1) {
+      pY[i] = FLOOR_Y - 1;
+      if (k === PK_ROCK && pBounce[i] === 0) { pVY[i] *= -0.38; pVX[i] *= 0.6; pBounce[i] = 1; }
+      else if (k === PK_EMBER) { pVY[i] *= -0.3; pVX[i] *= 0.7; }
+      else { pVY[i] = 0; pVX[i] *= 0.75; }
+    }
+    if (pX[i] < -3 || pX[i] > W + 3 || pY[i] < -3) pK[i] = 0;
+  }
+}
+
+function drawParticles() {
+  for (let i = 0; i < NP; i++) {
+    const k = pK[i];
+    if (k === 0) continue;
+    const f = 1 - pLife[i] / pMax[i];
+    const x = ri(pX[i]), y = ri(pY[i]);
+    if (k === PK_ORBIT || k === PK_EMBER) {
+      let r = (f * 4) | 0; if (r > 3) r = 3;
+      fput(x, y, EMBER_RAMP[r]);
+      if (k === PK_EMBER && r < 2) {
+        const vx = pVX[i], vy = pVY[i];
+        if (vx * vx + vy * vy > 1) fput(x - (vx > 0.3 ? 1 : vx < -0.3 ? -1 : 0), y - (vy > 0.3 ? 1 : vy < -0.3 ? -1 : 0), EMBER_RAMP[r + 1]);
+      }
+    } else if (k === PK_DUST) {
+      let r = (f * 3) | 0; if (r > 2) r = 2;
+      fput(x, y, DUST_RAMP[r]);
+    } else {
+      const c = f > 0.75 ? STONE_D : pCol[i];
+      fput(x, y, c);
+      if (pSize[i] > 1) { fput(x + 1, y, c); fput(x, y - 1, f > 0.75 ? STONE_D : STONE_M); }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Impact effects: cracks, shockwave, flash, screen shake
+// ---------------------------------------------------------------------------
+const CR_MAX = 64;
+const crX = new Int16Array(CR_MAX), crY = new Int16Array(CR_MAX), crO = new Uint8Array(CR_MAX);
+let crN = 0, crackT = 9999, shockT = 9999, flashT = 0, skyFlash = 0, impX = 0;
+let shakeT = 0, shakeX = 0, shakeY = 0;
+
+const RING_N = 16;
+const ringC = new Float64Array(RING_N), ringS = new Float64Array(RING_N);
+for (let k = 0; k < RING_N; k++) { const a = Math.PI * k / (RING_N - 1); ringC[k] = Math.cos(a); ringS[k] = Math.sin(a); }
+
+function addCrack(x, y, o) {
+  if (crN >= CR_MAX) return;
+  crX[crN] = x; crY[crN] = y; crO[crN] = o; crN++;
+}
+
+function genCracks(ix) {
+  crN = 0;
+  addCrack(ix, FLOOR_Y, 0);
+  addCrack(ix, FLOOR_Y + 1, 0);
+  for (let b = 0; b < 4; b++) {
+    const dir = (b & 1) ? 1 : -1, down = b >= 2 ? 0.55 : 0.2;
+    let x = ix, y = FLOOR_Y + (b >= 2 ? 1 : 0);
+    const len = 5 + ((rndi() * RS * 6) | 0);
+    for (let k = 1; k <= len; k++) {
+      x += dir;
+      if (rndi() * RS < down && y < FLOOR_Y + 8) y++;
+      addCrack(x, y, k);
+    }
+  }
+}
+
+function drawCracks() {
+  if (crackT > 220) return;
+  const grow = crackT >= 20 ? 11 : (crackT / 1.8) | 0;
+  const c = crackT < 8 ? EM_O : crackT < 20 ? EM_R : crackT < 40 ? EM_D : crackT < 130 ? OUTLINE : STONE_D;
+  for (let k = 0; k < crN; k++) if (crO[k] <= grow) fput(crX[k], crY[k], c);
+}
+
+function drawShockwave() {
+  if (shockT >= 20) return;
+  const r = 3 + shockT * 2.2;
+  const c = shockT < 4 ? EM_Y : shockT < 9 ? EM_O : shockT < 14 ? STONE_L : STONE_M;
+  for (let k = 0; k < RING_N; k++) {
+    const x = impX + ri(ringC[k] * r), y = FLOOR_Y - 1 - ri(ringS[k] * r * 0.18);
+    if (x < 0 || x >= W || y < 0) continue;
+    if (sp[y * W + x] === EMPTY) fput(x, y, c);
+  }
+  const rl = ri(r);
+  for (let d = -1; d <= 1; d++) {
+    fput(impX - rl + d, FLOOR_Y, c);
+    fput(impX + rl + d, FLOOR_Y, c);
+  }
+}
+
+function drawFlash() {
+  if (flashT <= 0) return;
+  const x = impX, y = FLOOR_Y - 1, len = flashT > 3 ? 5 : 3;
+  for (let k = 1; k <= len; k++) {
+    const c = k < 2 ? MOON : k < 4 ? EM_Y : EM_O;
+    fput(x - k, y, c); fput(x + k, y, c); fput(x, y - k, c);
+    if (k < len) { fput(x - k, y - k, c); fput(x + k, y - k, c); }
+  }
+  fput(x, y, MOON);
+}
+
+function impact() {
+  const ix = J[J_IPX] < 3 ? 3 : J[J_IPX] > W - 4 ? W - 4 : J[J_IPX];
+  impX = ix;
+  freeze = 5; shakeT = 14; shockT = 0; crackT = 0; flashT = 6; skyFlash = 2;
+  genCracks(ix);
+  for (let n = 0; n < 22; n++) {
+    const i = spawn(PK_EMBER, ix, FLOOR_Y - 2, 18 + ((rndi() * RS * 24) | 0));
+    if (i < 0) break;
+    const a = Math.PI + 0.25 + rndi() * RS * (Math.PI - 0.5), s = 0.9 + rndi() * RS * 1.8;
+    pVX[i] = Math.cos(a) * s; pVY[i] = Math.sin(a) * s;
+    pDrag[i] = 0.95; pGrav[i] = 0.06;
+  }
+  for (let n = 0; n < 34; n++) {
+    const i = spawn(PK_DUST, ix + ((rndi() * RS * 7) | 0) - 3, FLOOR_Y - 1, 24 + ((rndi() * RS * 22) | 0));
+    if (i < 0) break;
+    const side = n & 1 ? 1 : -1;
+    pVX[i] = side * (0.6 + rndi() * RS * 1.7);
+    pVY[i] = -0.05 - rndi() * RS * 0.45;
+    pDrag[i] = 0.92; pGrav[i] = 0.008;
+  }
+  for (let n = 0; n < 16; n++) {
+    const i = spawn(PK_ROCK, ix + ((rndi() * RS * 5) | 0) - 2, FLOOR_Y - 2, 55 + ((rndi() * RS * 30) | 0));
+    if (i < 0) break;
+    pVX[i] = (rndi() * RS - 0.5) * 3.4;
+    pVY[i] = -1.2 - rndi() * RS * 1.4;
+    pDrag[i] = 0.99; pGrav[i] = 0.13;
+    pCol[i] = rndi() & 1 ? STONE_L : STONE_M;
+    pSize[i] = n < 5 ? 2 : 1;
+  }
+}
+
+function pullFreeDebris() {
+  for (let n = 0; n < 6; n++) {
+    const i = spawn(PK_ROCK, impX + ((rndi() * RS * 5) | 0) - 2, FLOOR_Y - 1, 40 + ((rndi() * RS * 20) | 0));
+    if (i < 0) break;
+    pVX[i] = (rndi() * RS - 0.7) * 1.6;
+    pVY[i] = -0.8 - rndi() * RS * 0.9;
+    pDrag[i] = 0.99; pGrav[i] = 0.12;
+    pCol[i] = STONE_M;
+  }
+  dustPuff(impX, 6, 1.6);
+}
+
+// ---------------------------------------------------------------------------
+// State machine
+// ---------------------------------------------------------------------------
+// The pose is a pure function of the quantized state time, so evaluating it every
+// tick changes nothing visually; it keeps the rig hot enough for the optimizing JIT.
+function evalPose() {
+  computePose();
+  computeRig();
+}
+
+function sample() {
+  prevGX = J[J_GX]; prevGY = J[J_GY]; F[F_PREVA] = P[AXE];
+  evalPose();
+  latchSecondary();
+}
+
+function nextState() {
+  const leaving = state;
+  state = leaving === RETURN ? IDLE : leaving + 1;
+  st = 0;
+  sample();
+  if (state === RECOVER) { addTrails(3); impact(); }
+  else if (state === LEAP) { /* push-off frame */ }
+  else if (state === IDLE) dustPuff(J[J_ABX], 3, 0.8);
+}
+
+function update() {
+  tick++;
+  if (freeze > 0) freeze--;
+  else {
+    st++;
+    if (st >= DUR[state]) nextState();
+    else if (st % SAMPLE === 0) {
+      sample();
+      if (state === SLAM) addTrails(2);
+      if (state === LEAP && st === SAMPLE) { dustPuff(43, 7, 2.2); dustPuff(25, 7, 2.2); }
+      if (state === RECOVER && st === 35) pullFreeDebris();
+      if (state === RETURN && st % 20 === 0) dustPuff(((st / 20) & 1) ? J[J_AFX] : J[J_ABX], 3, 0.8);
+    } else evalPose();
+    updateSprings();
+    if (state === CHARGE) {
+      const f = st / DUR[CHARGE];
+      if (rndi() * RS < 0.3 + 0.7 * f) spawnOrbit();
+      if (f > 0.5 && rndi() * RS < f - 0.35) spawnOrbit();
+    }
+  }
+
+  updateParticles();
+  if (crackT < 9999) crackT++;
+  if (shockT < 9999) shockT++;
+  if (flashT > 0) flashT--;
+  if (skyFlash > 0) skyFlash--;
+  if (shakeT > 0) {
+    shakeT--;
+    if ((shakeT & 1) === 0) {
+      const amp = shakeT > 7 ? 2 : 1;
+      shakeX = rndi() & 1 ? amp : -amp;
+      shakeY = (rndi() % 3) - 1;
+    }
+    if (shakeT === 0) { shakeX = 0; shakeY = 0; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+function drawShadow() {
+  let w = ri(9 - (STAND_Y - P[HY] > 0 ? (STAND_Y - P[HY]) * 0.4 : 0));
+  if (w < 3) w = 3;
+  const x = J[J_HX];
+  for (let k = -w; k <= w; k++) fput(x + k, FLOOR_Y, STONE_D);
+  for (let k = -w + 2; k <= w - 2; k++) fput(x + k, FLOOR_Y + 1, STONE_D);
+}
+
+function renderLogical() {
+  fb.set(bg);
+  if (skyFlash > 0) {
+    for (let i = 0; i < FLOOR_Y * W; i++) { const v = fb[i]; if (v <= SKY3) fb[i] = v + 1; }
+  }
+  drawStars();
+  drawShadow();
+  drawCracks();
+  drawTrails();
+
+  drawOrc();
+  outlinePass();
+  moonRim();
+  warmRim();
+  compositeSprite();
+
+  drawShockwave();
+  drawFlash();
+  drawParticles();
+
+  for (let y = 0; y < H; y++) {
+    let sy = y - shakeY;
+    if (sy < 0) sy = 0; else if (sy >= H) sy = H - 1;
+    const srow = sy * W, drow = y * W;
+    for (let x = 0; x < W; x++) {
+      let sx = x - shakeX;
+      if (sx < 0) sx = 0; else if (sx >= W) sx = W - 1;
+      out32[drow + x] = pal32[fb[srow + sx]];
+    }
+  }
+  octx.putImageData(img, 0, 0);
+}
+
+function present() {
+  sctx.fillStyle = PAL[0];
+  sctx.fillRect(0, 0, screen.width, screen.height);
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(off, 0, 0, W, H, offX, offY, W * scale, H * scale);
+}
+
+// ---------------------------------------------------------------------------
+// Fixed 60hz timestep, rAF presentation
+// ---------------------------------------------------------------------------
+const STEP = 1000 / 60;
+
+function frame(now) {
+  if (F[F_LAST] < 0) F[F_LAST] = now;
+  let dt = now - F[F_LAST];
+  F[F_LAST] = now;
+  if (dt > 250) dt = 250;
+  F[F_ACC] += dt;
+  let stepped = false;
+  while (F[F_ACC] >= STEP) { update(); F[F_ACC] -= STEP; stepped = true; }
+  if (stepped) { renderLogical(); dirty = true; }
+  if (dirty) { present(); dirty = false; }
+  requestAnimationFrame(frame);
+}
+
+function resetLoop() {
+  pK.fill(0);
+  trB.fill(-9999);
+  state = IDLE; st = 0; tick = 0; freeze = 0;
+  crN = 0; crackT = 9999; shockT = 9999; flashT = 0; skyFlash = 0;
+  shakeT = 0; shakeX = 0; shakeY = 0;
+  computePose();
+  computeRig();
+  F[F_CLOTH] = 0; F[F_CLOTHV] = 0; F[F_ARM] = P[HY]; F[F_ARMV] = 0;
+  latchSecondary();
+}
+
+// Run every path twice before the first visible frame so the JIT settles with
+// complete type feedback instead of deoptimizing (and boxing) mid-animation.
+function warmUp() {
+  resetLoop();
+  let loop = 0;
+  for (let s = 0; s < DUR.length; s++) loop += DUR[s];
+  for (let n = 0; n < (loop + 10) * 2; n++) { update(); renderLogical(); }
+  // The rig and spark spawner are cheap pure math; push them to the top JIT tier.
+  for (let n = 0; n < 40000; n++) {
+    state = n % 6;
+    st = (n * 7) % DUR[state];
+    evalPose();
+    if ((n & 63) === 0) { spawnOrbit(); pK.fill(0); }
+  }
+  resetLoop();
+}
+
+buildBackground();
+buildStars();
+resize();
+F[F_LAST] = -1;
+warmUp();
+renderLogical();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
