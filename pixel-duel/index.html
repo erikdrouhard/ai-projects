@@ -1466,7 +1466,15 @@ function drawProjectile() {
     if (fb[i] === STONE_L || fb[i] === STONE_M) fb[i] = (dx > -3 && dx < 3) ? M_BLUE : M_VIOLET;
   }
   const fr = (tick >> 2) & 1;
+  const tail = prAge < 5 ? prAge * 3 : 15;
+  for (let k = 3; k <= tail; k++) {
+    const c = k < 7 ? M_CYAN : k < 11 ? M_BLUE : M_VIOLET;
+    fput(x + k, y, c);
+    if (k < 9) { fput(x + k, y - 1, k < 5 ? M_CYAN : M_BLUE); fput(x + k, y + 1, k < 5 ? M_CYAN : M_BLUE); }
+    else if (k < 13 && ((k + fr) & 1)) { fput(x + k, y - 1, M_VIOLET); fput(x + k, y + 1, M_VIOLET); }
+  }
   fput(x + 3, y, M_BLUE); fput(x + 2, y - 1, M_BLUE); fput(x + 2, y + 1, M_BLUE);
+  fput(x - 1, y - 2, M_CYAN); fput(x - 1, y + 2, M_CYAN); fput(x - 3, y, M_CYAN);
   for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) fput(x + i, y + j, M_CYAN);
   fput(x, y - 2, M_CYAN); fput(x, y + 2, M_CYAN); fput(x - 2, y, M_CYAN); fput(x + 2, y, M_CYAN);
   fput(x, y, MOON); fput(x + 1, y, MOON); fput(x, y - 1, MOON);
@@ -1608,7 +1616,7 @@ function update() {
 
     if (prActive) {
       prAge++;
-      const prX = F[F_PRX] -= 3.0;
+      const prX = F[F_PRX] -= 2.0;
       prY = gemWY + ri(Math.sin(prAge * 0.5));
       for (let n = 0; n < 2; n++) {
         const i = spawn(PK_MAGIC, ri(prX + 2 + rndi() * RS * 2), prY + ((rndi() * RS * 3) | 0) - 1, 10 + ((rndi() * RS * 12) | 0));
